@@ -3,10 +3,12 @@ IMPORTS
 """
 
 import numpy as np
+from math import factorial
 from scipy.sparse import csr_array
 from scipy.sparse.linalg import eigsh
-from itertools import product, combinations
+from itertools import product, combinations, permutations
 from collections import Counter, defaultdict
+from collections.abc import Generator
 from functools import reduce
 from more_itertools import locate, product_index
 from pathlib import Path, PurePath
@@ -338,6 +340,801 @@ def find_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> d
         return direct_sum
 
 """
+SYMMETRIC GROUP
+"""
+
+def find_partitions(n: int) -> Generator[list]:
+    """Creates all integer partitions of n using the accel_asc algorithm.
+    Partitions are generated as lists of weakly-descending integers.
+    """
+
+    # Adapted from
+    # https://jeromekelleher.net/generating-integer-partitions.html
+
+    a = [0 for i in range(n + 1)]
+    k = 1
+    y = n - 1
+    while k != 0:
+        x = a[k - 1] + 1
+        k -= 1
+        while 2 * x <= y:
+            a[k] = x
+            y -= x
+            k += 1
+        l = k + 1
+        while x <= y:
+            a[k] = x
+            a[l] = y
+            yield a[:k + 2][::-1]
+            x += 1
+            y -= 1
+        a[k] = x + y
+        y = x + y - 1
+        yield a[:k + 1][::-1]
+
+def calc_Sn_dimension(partition: list) -> int:
+    """Returns dimension of a symmetric group irrep,
+    given by an integer partition of n via the hook length formula.
+    """
+
+    # Gather initial data.
+    n = sum(partition)
+    num_cols = partition[0]
+    num_rows = len(partition)
+
+    # Whereas the partition gives the number of cells per row,
+    # the formula additionally needs the number of cells per column,
+    # which is contained in the conjugate partition.
+    conjugate_partition = []
+    for col in range(1, num_cols+1):
+        num_col_cells = 0
+        for num_row_cells in partition:
+            if num_row_cells >= col:
+                num_col_cells += 1
+            else:
+                continue
+        conjugate_partition.append(num_col_cells)
+
+    # This nested for-loop finds the hook length for each cell
+    # and multiplies them all.
+    hook_length_prod = 1
+    for i in range(num_rows):
+        for j in range(partition[i]):
+            hook_length = partition[i] + conjugate_partition[j] - i - j - 1
+            hook_length_prod *= hook_length
+
+    # Compute the hook length formula and round to ensure integral dimension.
+    dim = factorial(n)/hook_length_prod
+    return round(dim)
+
+def find_tableaux(partition: list) -> list:
+    """Generates standard Young tableaux given a partition.
+    Returns a list of the tableaux.
+    """
+
+    # This code is largely adapted from the PermutationGroup.m file
+    # of GroupMath, https://renatofonseca.net/groupmath
+
+    # Gather initial data.
+    n = sum(partition)
+    num_cols = partition[0]
+    num_rows = len(partition)
+    zeros = [0 for i in range(n)]
+
+    # Compute conjugate partition.
+    conjugate_partition = []
+    for col in range(1, num_cols+1):
+        num_col_cells = 0
+        for num_row_cells in partition:
+            if num_row_cells >= col:
+                num_col_cells += 1
+            else:
+                continue
+        conjugate_partition.append(num_col_cells)
+
+    # Compute canonical Young tableau.
+    canonical,count = [],0
+    for i in range(num_rows):
+        row = []
+        for j in range(partition[i]):
+            row.append(count)
+            count += 1
+        canonical.append(row)
+
+    # idxs_to_check is a list of lists, where each list is a list of
+    # at most two indices that a cell of the Young tableau must be
+    # immediately less than to remain standard. The index of the cell
+    # in the flattened tableau is the index of that cell in idxs_to_check.
+
+    idxs_to_check = [[] for i in range(n)]
+
+    for i in range(num_rows):
+        for j in range(partition[i]):
+            if j < partition[i]-1:
+                # Get index to the right of (i,j).
+                idxs_to_check[canonical[i][j]].append(canonical[i][j+1])
+            if i < num_rows-1 and j < partition[i+1]:
+                # Get index below (i,j).
+                idxs_to_check[canonical[i][j]].append(canonical[i+1][j])
+
+    # max_cell_vals gives the maximum value a cell can have on a
+    # standard Young tableau. This list is also flattened, so each
+    # entry's index corresponds to the cell with that index value
+    # on the canonical tableau.
+
+    max_cell_vals = []
+    for i in range(num_rows):
+        for j in range(partition[i]):
+            num = sum(partition[:i]) + sum(conjugate_partition[:j]) - i*j
+            max_cell_vals.append(num)
+
+    # Recursively generate the flattened standard Young tableaux.
+    # idx is the current index of the tableau that being filled in.
+    # tab_to_fill is the flattened tableau that needs to be filled;
+    # as idx increases it gradually becomes a standard tableau.
+    # min_cell_vals is a dynamical list of minimum values all
+    # cells in the tableau can have.
+
+    def generate(idx=0, tab_to_fill=zeros, min_cell_vals=zeros):
+            
+        # possible_cell_values gives the possible values the current
+        # cell can possibly have given the current min_cell_vals.
+        # Care is taken to not allow values that are already in tab_to_fill.
+        possible_cell_values = [val for val in range(min_cell_vals[idx], max_cell_vals[idx]+1) if val not in tab_to_fill[:idx]]
+
+        # For each value in possible_cell_values, create a new tab_to_fill
+        # and min_cell_vals. These go into new_tabs_to_fill and new_min_cell_vals.
+        # For new_min_cell_vals, care is taken to update the minimums
+        # of the idxs_to_check to the possible value plus one if
+        # their current minimum is below it.
+        new_tabs_to_fill = []
+        new_min_cell_vals = []
+        for val in possible_cell_values:
+            tab_aux = tab_to_fill.copy()
+            tab_aux[idx] = val
+            new_tabs_to_fill.append(tab_aux)
+
+            min_aux = min_cell_vals.copy()
+            for i in idxs_to_check[idx]:
+                min_aux[i] = max(min_aux[i], val+1)
+            new_min_cell_vals.append(min_aux)
+
+        # idx cannot be greater than n-1.
+        if idx==n-1:
+            return new_tabs_to_fill
+        else:
+            flattened_tableaux = []
+            for i in range(len(possible_cell_values)):
+                flattened_tableaux += generate(idx+1, new_tabs_to_fill[i], new_min_cell_vals[i])
+            return flattened_tableaux
+
+    flat_tabs = generate()
+    
+    # Unflatten generated flattened tableaux.
+
+    standard_tableaux = []
+    for t in range(len(flat_tabs)):
+        new_tab,count = [],0
+        for i in range(num_rows):
+            row = []
+            for j in range(partition[i]):
+                row.append(flat_tabs[t][count])
+                count += 1
+            new_tab.append(row)
+        standard_tableaux.append(new_tab)
+
+    return standard_tableaux
+
+def young_symmetrizer(tableaux: list[list[list]], idx_list: list[list]) -> Generator[tuple[float, tuple]]:
+    """Generates the Young symmetrizer corresponding to a list of standard
+    Young tableaux. This is a generator function; it yields the symmetrizer
+    as a sum of (coefficient, permutation), and an example of its use
+    is as follows.
+
+    Suppose A=(a,b,c,d,e) is to be symmetrized on indices [0,3] according to
+    the tableau [[0,1]] and symmetrized on indices [1,2,4] according to the
+    tableau [[0,2],[1]]. Then tableaux := [[[0,1]], [[0,2],[1]]] and
+    idx_list := [[0,3], [1,2,4]]. The permutations are returned as tuples
+    such as P=(3,1,2,0,4) so that A[i] -> A[P[i]] for i=0,...,4 -- or in
+    this case, A -> (d,b,c,a,e).
+
+    Each tableau in tableaux has an associated list of indices in idx_list.
+    Both arguments are assumed to be a list of lists, even if there is only
+    one tableau. The symmetrizer is a projector and is properly normalized.
+    """
+
+    # The algorithm presented in https://arxiv.org/pdf/1307.6147
+    # is implemented and referenced throughout this code.
+
+    # Finds the permutations that preserve the rows and columns of a tableau
+    # as well as whether the tableau is row and/or column ordered. With extra_data,
+    # inverses of the permutations and a product of hook lengths are also returned.
+    def tableau_data(tableau, extra_data=False):
+
+        # Gather initial data. Out of these variables, n is returned.
+        # tableau_T is the transpose of the tableau.
+
+        partition, conjugate_partition = [len(row) for row in tableau], []
+        n, num_cols, num_rows = sum(partition), partition[0], len(partition)
+        for col in range(1, num_cols+1):
+            num_col_cells = 0
+            for num_row_cells in partition:
+                if num_row_cells >= col:
+                    num_col_cells += 1
+                else:
+                    continue
+            conjugate_partition.append(num_col_cells)
+        tableau_T = [[tableau[j][i] for j in range(conjugate_partition[i])] for i in range(num_cols)]
+
+        # Extra data includes the product of hook lengths of the tableau (necessary
+        # for normalization) and the inverse row and column permutations.
+
+        if extra_data:
+            hook_length_prod = 1
+            for i in range(num_rows):
+                for j in range(partition[i]):
+                    hook_length = partition[i] + conjugate_partition[j] - i - j - 1
+                    hook_length_prod *= hook_length
+            inverse_row_permutations, inverse_col_permutations = [],[]
+        else:
+            pass
+
+        # row_word is the tableau, flattened row-wise.
+        # col_word is the tableau, flattened column-wise.
+        # is_row_ordered and is_col_ordered check if the lists
+        # are ordered from least to greatest.
+        # ~Definition 2
+
+        row_word = [i for row in tableau for i in row]
+        col_word = [i for col in tableau_T for i in col]
+        is_row_ordered = all(row_word[i] < row_word[i+1] for i in range(n-1))
+        is_col_ordered = all(col_word[i] < col_word[i+1] for i in range(n-1))
+
+        # row_permutations is a list of permutations that preserve the
+        # content of each row. col_permutations is a list of permutations
+        # that preserve the content of each column. They are built by joining
+        # all combinations X of disjoint permutations on each row/column.
+        # sorted_rows/cols sorts each row/column, for reference, to build
+        # the mapping that each X corresponds to. perm turns the mapping
+        # to the usual tuple version of a permutation. An inverse permutation
+        # is found by using the inverse mapping.
+
+        row_permutations = []
+        sorted_rows = [sorted(row) for row in tableau if len(row)>1]
+        for X in product(*(permutations(row) for row in tableau if len(row)>1)):
+            mapping = {sorted_rows[i][j]: X[i][j] for i in range(len(sorted_rows)) for j in range(partition[i]) if X[i][j] != sorted_rows[i][j]}
+            perm = tuple(mapping[i] if i in mapping else i for i in range(n))
+            row_permutations.append(perm)
+            if extra_data:
+                inverse_mapping = {v:k for k,v in mapping.items()}
+                inverse_row_permutations.append(tuple(inverse_mapping[i] if i in inverse_mapping else i for i in range(n)))
+            else:
+                continue
+
+        col_permutations = []
+        sorted_cols = [sorted(col) for col in tableau_T if len(col)>1]
+        for X in product(*(permutations(col) for col in tableau_T if len(col)>1)):
+            mapping = {sorted_cols[i][j]: X[i][j] for i in range(len(sorted_cols)) for j in range(conjugate_partition[i]) if X[i][j] != sorted_cols[i][j]}
+            perm = tuple(mapping[i] if i in mapping else i for i in range(n))
+            col_permutations.append(perm)
+            if extra_data:
+                inverse_mapping = {v:k for k,v in mapping.items()}
+                inverse_col_permutations.append(tuple(inverse_mapping[i] if i in inverse_mapping else i for i in range(n)))
+            else:
+                continue
+
+        if extra_data:
+            return n, row_permutations, col_permutations, is_row_ordered, is_col_ordered, inverse_row_permutations, inverse_col_permutations, hook_length_prod
+        else:
+            return n, row_permutations, col_permutations, is_row_ordered, is_col_ordered
+
+    # Calculates the sign of a permutation.
+    def sgn(permutation):
+        n = len(permutation)
+        num_inversions = 0
+        for i in range(n):
+            for j in range(i+1, n):
+                if permutation[i] > permutation[j]:
+                    num_inversions += 1
+                else:
+                    continue
+        if num_inversions % 2 == 0:
+            return 1
+        else:
+            return -1
+
+    # Computes the equivalent permutation got by first applying p1 and then p2.
+    # p1 and p2 need not be of equal lengths; n ensures that the final permutation
+    # is of length n. Nevertheless, p1 and p2 should each contain integers 0,1,...,x.
+    def compose_two(p1, p2, n):
+        if len(p1) == len(p2):
+            perm = tuple(p1[p2[i]] for i in range(len(p1)))
+        elif len(p1) > len(p2):
+            perm = tuple(p1[p2[i]] if i in p2 else p1[i] for i in range(len(p1)))
+        else:
+            perm = tuple(p1[p2[i]] if p2[i] in p1 else p2[i] for i in range(len(p2)))
+        if len(perm) == n:
+            return perm
+        else:
+            return perm + tuple(range(len(perm), n))
+        
+    # Simplifies a product of linear combinations of permutations into a single
+    # linear combination of distinct permutations. perms_lists is a list of
+    # row- or column-preserving permutations. anti_idxs is a list of indices
+    # of lists in perms_lists that contain column-preserving permutations;
+    # these permutations act with a factor of their sign. As an expression,
+    # (1 + p1 + p2 + ...) x (1 + p1 + p2 + ...) x ... is the input and the output
+    # is a0*1 + a1*p1 + a2*p2 + ... returned as dictionary whose keys are the
+    # distinct permutations pk and whose values are their coefficients ak.
+    def reduce_perms(perms_lists, anti_idxs, n):
+        # perms_lists is given such that the first list of permutations actually
+        # acts first. ordered reverses perms_lists to correct this. res is the
+        # final output; because the symmetrizer is so far unnormalized, its
+        # permutations' coefficients will be integers.
+        ordered = perms_lists[::-1]  
+        res = defaultdict(int)
+        for i in range(1,len(perms_lists)):
+            if i==1:
+                for p1,p2 in product(ordered[0], ordered[i]):
+                    new = compose_two(p1,p2,n)
+                    if 0 in anti_idxs:
+                        res[new] += sgn(p1)
+                    elif i in anti_idxs:
+                        res[new] += sgn(p2)
+                    else:
+                        res[new] += 1
+                temp = res.copy()
+            else:
+                for p1,p2 in product(temp, ordered[i]):
+                    new = compose_two(p1,p2,n)
+                    if new==p1:
+                        continue
+                    elif i in anti_idxs:
+                        new_val = temp[new] + res[p1]*sgn(p2)
+                    else:
+                        new_val = temp[new] + res[p1]
+                    if new_val == 0:
+                        del temp[new]
+                    else:
+                        temp[new] = new_val
+                res = temp
+                temp = res.copy()
+        return dict(res)
+
+    symmetrizers = []
+    norm = 1
+
+    for tableau in tableaux:
+
+        # Gather data for the input tableau.
+        # Only the inverse permutations for the input tableau are necessary.
+        # The usual Young symmetrizers are built with the convention where
+        # column permutations are applied first, followed by row permutations.
+        # ~Eq. (26)
+        n, row_perms, col_perms, is_row_ordered, is_col_ordered, inv_row_perms, inv_col_perms, hook_length_prod = tableau_data(tableau, extra_data=True)
+
+        # If the tableau is already row-ordered or column-ordered,
+        # then the Young symmetrizer can be immediately built.
+        # perms_lists is a tuple of permutations. anti_idxs gives which indices/permutations
+        # in perms_lists are part of antisymmetrizers, and therefore come with a
+        # factor of sgn(permutation). Inverse permutations are included as
+        # necessary. Note that permutation^dagger := permutation^(-1)
+        # and the sign of a permutation equals the sign of its inverse.
+        # ~Theorem 4
+
+        if is_row_ordered:
+            anti_idxs = [1,2]
+            perms_lists = [row_perms, col_perms, inv_col_perms, inv_row_perms]
+        elif is_col_ordered:
+            anti_idxs = [0,3]
+            perms_lists = [inv_col_perms, inv_row_perms, row_perms, col_perms]
+
+        else:
+
+            # Determine the MOLD (M) of the tableau by applying the parent
+            # map on the tableau. For each parent tableau, gather its
+            # tableau_data for later use.
+            # ~Definitions 1 and 3
+
+            M, ancestor_perms = 0, []
+            child_n, child_tab = n, tableau
+            while not (is_row_ordered or is_col_ordered):
+                parent_tableau = []
+                for i in range(len(child_tab)):
+                    row = []
+                    for j in range(len(child_tab[i])):
+                        if child_tab[i][j] != child_n-1:
+                            row.append(child_tab[i][j])
+                        else:
+                            continue
+                    if len(row) == 0:
+                        continue
+                    else:
+                        parent_tableau.append(row)
+                child_tab = parent_tableau
+                child_n, parent_row_perms, parent_col_perms, is_row_ordered, is_col_ordered = tableau_data(parent_tableau)
+                ancestor_perms.append([parent_row_perms, parent_col_perms])
+                M += 1
+
+            # The Young symmetrizer depends on the parity of M and whether
+            # the Mth ancestor tableau is row-ordered or column-ordered.
+            # Each configuration is slightly different. ancestor_..._perms
+            # describes the order in which the ancestor row or column
+            # permutations appear in a Young symmetrizer.
+            # ~Theorem 5
+
+            num = 2*M + 4
+            if is_row_ordered:
+                if M%2==0:
+                    ancestor_col_row_perms = [ancestor_perms[i][1] if i%2==0 else ancestor_perms[i][0] for i in range(M)]
+                    perms_lists = ancestor_col_row_perms[::-1] + [row_perms, col_perms, inv_col_perms, inv_row_perms] + ancestor_col_row_perms
+                    anti_idxs = [i for i in range(num) if (i%2==1 and i<num//2) or (i%2==0 and i>=num//2)]
+                else:
+                    ancestor_row_col_row_perms = [ancestor_perms[i][0] if i%2==0 else ancestor_perms[i][1] for i in range(M)]
+                    perms_lists = ancestor_row_col_row_perms[::-1] + [inv_col_perms, inv_row_perms, row_perms, col_perms] + ancestor_row_col_row_perms
+                    anti_idxs = [i for i in range(num) if (i%2==1 and i<num//2) or (i%2==0 and i>num//2)]
+            elif is_col_ordered:
+                if M%2==0:
+                    ancestor_row_col_perms = [ancestor_perms[i][0] if i%2==0 else ancestor_perms[i][1] for i in range(M)]
+                    perms_lists = ancestor_row_col_perms[::-1] + [inv_col_perms, inv_row_perms, row_perms, col_perms] + ancestor_row_col_perms
+                    anti_idxs = [i for i in range(num) if (i%2==0 and i<num//2) or (i%2==1 and i>num//2)]
+                else:
+                    ancestor_col_row_col_perms = [ancestor_perms[i][1] if i%2==0 else ancestor_perms[i][0] for i in range(M)]
+                    perms_lists = ancestor_col_row_col_perms[::-1] + [row_perms, col_perms, inv_col_perms, inv_row_perms] + ancestor_col_row_col_perms
+                    anti_idxs = [i for i in range(num) if (i%2==0 and i<num//2) or (i%2==1 and i>=num//2)]
+
+        # perms_lists is simplified with reduce_perms. combined_perms is the
+        # (unnormalized) Young symmetrizer for this tableau and portion of idx_list.
+        # The normalization factor norm can be found by taking the coefficient of
+        # identity permutation and the product of hook lengths for tableau.
+
+        combined_perms = reduce_perms(perms_lists, anti_idxs, n)
+        id_coeff = combined_perms[tuple(i for i in range(n))]
+        norm *= 1/(id_coeff*hook_length_prod)
+        symmetrizers.append(combined_perms)
+
+    # Each Young symmetrizer in symmetrizers is made of permutations on 0,...,x.
+    # These integers need to be translated to appropriate indices in idx_list.
+    # Taking advantage of symmetrizers containing disjoint Young symmetrizers,
+    # this for-loop generates the complete, normalized Young symmetrizer by
+    # expanding (a0*1 + a1*p1 + ...) x (b0*1 + b1*q1 + ...) x ...
+
+    num_idxs = sum(len(x) for x in idx_list)
+    num_idx_lists = len(idx_list)
+    for X in product(*symmetrizers):
+        temp = [0 for i in range(num_idxs)]
+        coeff = 1
+        for i in range(num_idx_lists):
+            coeff *= symmetrizers[i][X[i]]
+            for j in range(len(idx_list[i])):
+                temp[idx_list[i][j]] = idx_list[i][X[i][j]]
+        prefactor = norm*coeff
+        perm = tuple(temp)
+        yield prefactor, perm
+
+def find_plethysms(iweight: tuple, n: int) -> dict[tuple, dict[tuple, int]]:
+    """Decomposes a direct product of n factors of an irrep (iweight)
+    into a direct sum of irreps. The decomposition is returned as a dictionary
+    whose keys are the direct-sum irreps, and whose values are dictionaries
+    giving the symmetric group irrep (given as a partition of n) those
+    irreps transform under, with multiplicity.
+    """
+
+    # This code is largely adapted from the PermutationGroup.m file
+    # of GroupMath, https://renatofonseca.net/groupmath
+
+    # Gather initial data.
+    N = len(iweight)
+    fundamental_rep = tuple(1 if i==0 else 0 for i in range(N))
+    longest_Weyl_word = [j for i in range(N-2,-1,-1) for j in range(i+1)]
+
+    # The dominant weights are z-weights whose entries are all nonnegative.
+    # dominant_zweights records these weights as well as their multiplicities.
+    dominant_zweights = defaultdict(int)
+    for pat in find_gt_patterns(iweight):
+        zweight = calc_weight(pat, 'z')
+        if all(x>=0 for x in zweight):
+            dominant_zweights[tuple(zweight)] += 1
+        else:
+            continue
+
+    # Simple roots can be extracted from the z-weights of the
+    # fundamental representation.
+    simple_roots,fund_basis = [],find_gt_patterns(fundamental_rep)
+    for i in range(N-1):
+        wi = np.array(calc_weight(fund_basis[i], 'z'))
+        wi_1 = np.array(calc_weight(fund_basis[i+1], 'z'))
+        simple_roots.append(2*(wi - wi_1))
+
+    # Calculates the order of the conjugacy
+    # class of the Sn irrep given by partition.
+    def class_order(partition):
+        prod,cycle_tally = 1,Counter(partition)
+        for cycle_len, num in cycle_tally.items():
+            prod *= cycle_len**num * factorial(num)
+        return round(factorial(n)/prod)
+    
+    # Finds the rim hooks of a given length l
+    # for a given partition.
+    def rim_hooks(partition, l):
+
+        def partition_to_sequence(p):
+            s,num_rows = [],len(p)
+            for i in range(num_rows):
+                if i==0:
+                    s += [1]*p[num_rows-1] + [0]
+                else:
+                    s += [1]*(p[num_rows-i-1]- p[num_rows-i]) + [0]
+            return s
+        
+        def sequence_to_partition(s):
+            p,num_ones = [],0
+            for i in s:
+                if i==0:
+                    p = [num_ones] + p
+                else:
+                    num_ones += 1
+            return [x for x in p if x!=0]
+        
+        sequence = partition_to_sequence(partition)
+        rhooks = []
+        for i in range(len(sequence)-l):
+            if sequence[i]==1 and sequence[i+l]==0:
+                rhseq = sequence.copy()
+                rhseq[i],rhseq[i+l] = 0,1
+                length = sequence[i:i+l+1].count(0)-1
+                rhooks.append([sequence_to_partition(rhseq), length])
+            else:
+                continue
+        return rhooks
+
+    # Computes the character of an Sn_partition
+    # in the irrep given by partition recursively.
+    def class_character(partition, Sn_partition):
+        if len(partition)==0:
+            return 1
+        else:
+            new_irreps = rim_hooks(partition, Sn_partition[0])
+            new_Sn_irrep = Sn_partition[1:]
+            character = sum((-1)**l * class_character(p,new_Sn_irrep) for p,l in new_irreps)
+            return character
+
+    # Finds the i-weight corresponding to a dominant weight,
+    # assumed to be the highest weight of an irrep.
+    def find_iweight(zweight):
+        pweight,count = [0],-1
+        for i in range(len(zweight)-1,-1,-1):
+            if i==len(zweight)-1:
+                pweight.append(int(2*zweight[i]))
+            else:
+                pweight.append(int(2*zweight[i] + pweight[count+1]))
+            count += 1
+        return tuple(pweight[::-1])
+
+    # Finds Weyl orbit of a given z-weight.
+    def Weyl_orbit(zweight):
+        orbit,weights = [np.array(zweight)],[np.array(zweight)]
+        while len(weights) != 0:
+            trial_weights,new_weights = [],[]
+            for w in weights:
+                if not np.any(w):
+                    trial_weights.append(None)
+                else:
+                    reflections = []
+                    for i in range(N-1):
+                        reflections.append(w - w[i]*simple_roots[i])
+                    trial_weights.append(reflections)
+            for i in range(N-1):
+                for j in range(len(weights)):
+                    if weights[j][i] <= 0 or trial_weights[j] is None:
+                        continue
+                    else:
+                        check = trial_weights[j][i][i+1:N-1]
+                        if np.all(check==abs(check)):
+                            new_weights.append(trial_weights[j][i])
+                        else:
+                            continue
+            weights = new_weights
+            if len(weights) != 0:
+                orbit += weights
+            else:
+                continue
+        return orbit
+
+    # Applies the kth Adams operator to the irrep (iweight).
+    def Adams(k):
+
+        def v_decomp(dweight):
+            poly = [[w,1] for w in Weyl_orbit(dweight)]
+            for i in range(len(longest_Weyl_word)):
+                for j in range(len(poly)):
+                    if poly[j][1] != 0:
+                        letter = longest_Weyl_word[i]
+                        if poly[j][0][letter] >= 0:
+                            continue
+                        elif poly[j][0][letter] == -0.5:
+                            poly[j][1] = 0
+                        elif poly[j][0][letter] <= -1:
+                            factor = poly[j][0][letter] + 0.5
+                            poly[j][1] *= -1
+                            poly[j][0] = poly[j][0] - factor*simple_roots[letter]
+                        else:
+                            continue
+                    else:
+                        continue
+            for monomial,coeff in poly:
+                if coeff == 0:
+                    continue
+                else:
+                    yield find_iweight(monomial.tolist()), coeff
+
+        polynomial = defaultdict(int)
+        for dweight,mult in dominant_zweights.items():
+            scaled_dweight = [k*x for x in dweight]
+            for R,coeff in v_decomp(scaled_dweight):
+                polynomial[R] += coeff*mult
+        return {R:num for R,num in polynomial.items() if num != 0}
+
+    # A plethysm has a polynomial where each term is an SU(N) irrep with
+    # a multiplicity coefficient. The formula for the polynomial can be found
+    # in page 72 of http://wwwmathlabo.univ-poitiers.fr/~maavl/pdf/LiE-manual.pdf
+    # The algorithm is iterative and many computations are repeated; to
+    # mitigate this, Adams_dict stores all possible evaluations of Adams.
+    # decomp_dict stores all direct-sum decompositions. part_dict effectively
+    # evaluates the formula once, storing each term from it, up to a coefficient.
+
+    Adams_dict = {k: Adams(k) for k in range(1,n+1)}
+    part_dict,decomp_dict = {},{}
+
+    # The formula may produce a direct product of (direct-sum) polynomials
+    # of the form (R1 + R2 + R3 + ...) x (S1 + S2 + S3 + ...) x ...
+    # with integer coefficients on each irrep. The direct products are
+    # decomposed with find_direct_sum and all direct-sum irreps are combined
+    # at the end. Irreps with coefficient zero are discarded.
+
+    for P in find_partitions(n):
+
+        # poly_dict represents the final polynomial as a dictionary
+        # whose keys are irreps and whose values are their coefficients.
+        # polynomial_factors is a list of the (direct-sum) polynomials,
+        # which are also lists of [irrep, prefactor].
+        polynomial_factors = [Adams_dict[k] for k in P]
+
+        if len(P) == 1:
+             part_dict[tuple(P)] = polynomial_factors[0]
+        else:
+            poly_dict = defaultdict(int)
+
+            for i in range(1,len(P)):
+                if i == 1:
+                    for R,Rp in product(polynomial_factors[0], polynomial_factors[i]):
+                        label = tuple(sorted([R,Rp]))
+                        num = polynomial_factors[0][R]*polynomial_factors[i][Rp]
+                        if label in decomp_dict:
+                            decomp = decomp_dict[label]
+                        else:
+                            decomp = find_direct_sum([R,Rp])
+                            decomp_dict[label] = decomp
+                        for S,mult in decomp.items():
+                            poly_dict[S] += num*mult
+                    poly_dict = {R:num for R,num in poly_dict.items() if num != 0}
+                else:
+                    temp = defaultdict(int)
+                    for R,Rp in product(poly_dict, polynomial_factors[i]):
+                        label = tuple(sorted([R,Rp]))
+                        num = poly_dict[R]*polynomial_factors[i][Rp]
+                        if label in decomp_dict:
+                            decomp = decomp_dict[label]
+                        else:
+                            decomp = find_direct_sum([R,Rp])
+                            decomp_dict[label] = decomp
+                        for S,mult in decomp.items():
+                            temp[S] += num*mult
+                    poly_dict = {R:num for R,num in temp.items() if num != 0}
+
+            part_dict[tuple(P)] = {R: num for R,num in poly_dict.items() if num != 0}
+
+    # plethysms holds the plethysm formula computed for each Sn irrep (partition).
+    # The formula contains a coefficient that is generally a float, unlike
+    # all previous coefficients. round is used to detect zeros and
+    # ensure all multiplicities are integer-valued.
+
+    plethysms = defaultdict(dict)
+
+    for partition in find_partitions(n):
+        plethysm = defaultdict(float)
+        for P in find_partitions(n):
+            coeff = class_order(P)*class_character(partition,P)/factorial(n)
+            if coeff == 0:
+                continue
+            else:
+                for R,num in part_dict[tuple(P)].items():
+                    plethysm[R] += coeff*num
+        for R,num in plethysm.items():
+            mult = round(num)
+            if mult == 0:
+                continue
+            else:
+                plethysms[R][tuple(partition)] = mult
+    
+    # Sort SU(N) irreps lexicographically.
+    plethysms = {R: plethysms[R] for R in sorted(plethysms.keys(), reverse=True)}
+    return plethysms
+
+def find_symmetry_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> tuple[dict, list]:
+    """Decomposes a direct product of irreps (product_iweights) into a
+    direct sum of irreps and provides the symmetry group irreps they
+    transform under. Returns a dictionary of the direct sum and a list
+    giving the lists of indices that transform under symmetric group irreps.
+    If sum_iweight is given, then the (possibly empty) dictionary of
+    the symmetry group irreps for only that sum_iweight is returned.
+    """
+
+    # Find all plethysms for each repeated irrep in product_iweights.
+    # keys is nearly list(set(product_iweights)), except the order of
+    # the irreps in keys is that of the irreps in plethysms. indices
+    # is a list of lists of indices of each irrep in keys as it appears
+    # in product_iweights.
+
+    plethysms = {R: find_plethysms(R,num) for R,num in Counter(product_iweights).items()}
+    keys = list(plethysms.keys())
+    indices = [list(locate(product_iweights, lambda x: x==R)) for R in keys]
+
+    # direct_sum initializes the dictionary for the final result.
+    # The plethysm polynomials are multiplied together, leading to
+    # further direct-sum decompositions. The individual terms of these
+    # decompositions are added together into direct_sum.
+
+    if sum_iweight is None:
+        direct_sum = defaultdict(lambda: defaultdict(int))
+    else:
+        symmetric_group_irreps = defaultdict(int)
+
+    # irreps is a tuple of irreps, representing a term of the distributed
+    # direct product of polynomials. For each irrep in irreps, there are
+    # potentially many symmetric group irreps attached to it from the
+    # plethysms. Each combination of these irreps must therefore be compiled.
+    # Sn_irreps gives the direct-sum irreps' Sn irreps with their own
+    # multiplicities.
+
+    if sum_iweight is None:
+        for irreps in product(*(plethysms[R] for R in plethysms)):
+            if len(irreps)==1:
+                decomp = {irreps[0]: 1}
+            else:
+                decomp = find_direct_sum(list(irreps))
+            for Sn_irreps in product(*(plethysms[keys[i]][irreps[i]].items() for i in range(len(keys)))):
+                partitions,mult = (),1
+                for p,m in Sn_irreps:
+                    partitions += (p,)
+                    mult *= m
+                for sum_irrep in decomp:
+                    direct_sum[sum_irrep][partitions] += decomp[sum_irrep]*mult
+    else:
+        for irreps in product(*(plethysms[R] for R in plethysms)):
+            if len(irreps)==1:
+                if irreps[0]==sum_iweight:
+                    multiplicity = 1
+                else:
+                    multiplicity = 0
+            else:
+                multiplicity = find_direct_sum(list(irreps), sum_iweight)
+            if multiplicity == 0:
+                continue
+            else:
+                for Sn_irreps in product(*(plethysms[keys[i]][irreps[i]].items() for i in range(len(keys)))):
+                    partitions,mult = (),1
+                    for p,m in Sn_irreps:
+                        partitions += (p,)
+                        mult *= m
+                    symmetric_group_irreps[partitions] += multiplicity*mult
+        return dict(symmetric_group_irreps), indices
+
+    # Sort the direct-sum irreps lexicographically.    
+    direct_sum = {R: dict(direct_sum[R]) for R in sorted(direct_sum.keys(), reverse=True)}
+    return direct_sum, indices
+
+"""
 CLEBSCH-GORDAN COEFFICIENTS
 """
 
@@ -345,9 +1142,11 @@ def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, 
     """Calculates the Clebsch-Gordan Coefficients for the highest-weight state
     of an irrep (sum_iweight) appearing in the direct-sum decomposition of a
     direct product of irreps (product_iweights). A multiplicity number
-    of orthonormal CGC vectors are produced. Returns a dictionary whose
-    keys are the multiplicity indices of sum_iweight, and whose values
-    are dictionaries of the form {product basis state: CGC}.
+    of orthonormal CGC vectors are produced. The CGCs transform under
+    irreps of the symmetric group, as given by find_symmetry_direct_sum.
+    Returns a dictionary whose keys are the multiplicity indices of
+    sum_iweight, and whose values are dictionaries of the form
+    {product basis state: CGC}.
     ~Eqs. (33)-(34) and Pg. 13
     """
 
@@ -368,6 +1167,14 @@ def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, 
     highest_weight_state = [[sum_iweight[i] for i in range(j)] for j in range(N,0,-1)]
     highest_weight = calc_weight(highest_weight_state, 'z')
     gt_patterns = {R: find_gt_patterns(R) for R in set(product_iweights)}
+
+    # Sn_irreps gives the symmetric group irreps the CGCs of sum_iweight
+    # should transform under. idx_list are the indices each irrep acts on.
+    # tableaux_cache stores necessary standard Young tableaux.
+
+    Sn_irreps, idx_list = find_symmetry_direct_sum(product_iweights, sum_iweight)
+    Sn_irrep_set = set(partition for partitions in Sn_irreps for partition in partitions)
+    tableaux_cache = {partition: find_tableaux(list(partition)) for partition in Sn_irrep_set}
 
     # The product basis is an exponentially large set. However, in order
     # for a basis state to have a nonzero CGC with the highest-weight state,
@@ -412,18 +1219,28 @@ def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, 
     # are grouped into candidates, whose J(1)z eigenvalue decomposition matches
     # that of the partition p. The candidates are looped over, checking if their
     # total J(k>1)z eigenvalues match those of the highest-weight state.
+    # In addition, selected basis states are grouped by permutations per
+    # indices in idx_list. Each group is recorded in perm_dict, whose key
+    # is the lexicographic version of each state, and whose value is a
+    # dictionary of the form {selected basis state index: selected basis state}.
 
     selected_basis = []
+    perm_dict,state_idx = defaultdict(dict),0
     for p in partition_zval(highest_weight[0]):
         candidates = [product_zweights[product_iweights[i]][0][p[i]] for i in range(len(product_iweights))]
         for state in product(*candidates):
             for k in range(1,N-1):
+                # == should be fine for half-integers.
                 if sum(calc_weight(gt_patterns[product_iweights[i]][state[i]], 'z')[k] for i in range(len(product_iweights))) == highest_weight[k]:
                     continue
                 else:
                     break
             else:
                 selected_basis.append(state)
+                # This relies on product_iweights being a sorted list of i-weights.
+                sorted_state = tuple(x for idxs in idx_list for x in sorted(state[i] for i in idxs))
+                perm_dict[sorted_state][state_idx] = state
+                state_idx += 1
 
     # The highest-weight (hw) state can be expanded in the selected basis (sb);
     # the coefficients of the expansion are the CGCs: |hw state> = sum_{sb} C_sb |sb state>.
@@ -458,7 +1275,7 @@ def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, 
 
     # Let system=S be the sparse matrix. Then it is true that S^T@S @ [CGC vector] = [zero vector].
     # Therefore, the CGCs are eigenvectors of S^T@S with eigenvalue zero.
-    # The eigsh algorithm can be finicky; v0 and ncv are chosen here by trial-and-error.
+    # The eigsh algorithm can be finicky; v0 and ncv were chosen here by trial-and-error.
 
     if len(val) == 0:
         vecs = np.array([[1.0]])
@@ -471,22 +1288,238 @@ def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, 
         # This is a check that the eigenvectors found have eigenvalue zero.
         if not all(abs(v)<EPS for v in vals): raise ArithmeticError('Some CGC vectors have nonzero eigenvalues:', [v for v in vals if abs(v)>=EPS])
 
-    # The phase convention is such that the CGC of the highest-weight
-    # product basis state is positive.
+    # Generally, the highest-weight state may transform under some nontrivial
+    # irrep of the symmetric group. In these cases, the highest-weight CGCs
+    # (the columns of vecs above) must be symmetrized. This can be done with
+    # Young symmetrizers. For a given set of standard Young tableaux, the Young
+    # symmetrizer Y will be a linear combination of permutations on the selected
+    # basis states (Y = sum_m a_m*p_m). The corresponding matrix is a projector
+    # with matrix elements <i|Y|j>, where |i> is a selected basis state. This is
+    # also sum_m a_m*<i|p_m|j>. Therefore, the only permutations that matter are
+    # those that take |j> to |i>. Using the fact that the projector is symmetric,
+    # ij_perms is a dictionary made to identify these permutations.
 
-    for a in range(multiplicity):
-        max_state_idx = selected_basis.index(min(selected_basis[i] for i in range(len(selected_basis)) if abs(vecs[:,a][i]) > EPS))
-        if vecs[:,a][max_state_idx] < 0:
-            vecs[:,a] *= -1
-        else:
-            continue
+    ij_perms = defaultdict(list)
+    for i in range(len(selected_basis)):
+        istate = selected_basis[i]
+        ikey = tuple(x for idxs in idx_list for x in sorted(istate[i] for i in idxs))
+        
+        # ival_idxs and jval_idxs give the states of indices of |i> and |j>
+        # per set of indices in idx_list. For example, in the case of RxRxSxS
+        # and |i>=(0,0,1,2), ival_idxs could be {0: {0: [0,1]}, 1: {1: [0], 2: [1]}}.
+        # The first set of keys refer to indices of idx_list (0 refers to [0,1] indices
+        # and 1 refers to [2,3] indices). This splits |i> into 'substates' -- namely,
+        # (0,0) and (1,2). The second set of keys are states of irreps. The final
+        # lists give indices of the 'substate' that have the state value.
+
+        ival_idxs = {}
+        for x in range(len(idx_list)):
+            substate = [istate[y] for y in idx_list[x]]
+            ival_idxs[x] = {n: list(locate(substate, lambda z: z==n)) for n in set(substate)}
+
+        # Only the upper triangular pairs of indices are necessary. Furthermore,
+        # nonzero matrix elements for (i,j) will come from states |j> that are
+        # related to |i> by permutation. Hence, the calls to perm_dict.
+
+        for j in perm_dict[ikey]:
+            if j < i:
+                continue
+            else:
+                jstate = perm_dict[ikey][j]
+
+                jval_idxs = {}
+                for x in range(len(idx_list)):
+                    substate = [jstate[y] for y in idx_list[x]]
+                    jval_idxs[x] = {n: list(locate(substate, lambda z: z==n)) for n in set(substate)}
+
+                # initial_perm is one of the most basic permutations that take
+                # |j> to |i>. All other relevant permutations can be built out of
+                # appropriate permutations of initial_perm.
+
+                initial_perm = {}
+                for x in range(len(idx_list)):
+                    for n in ival_idxs[x]:
+                        iidxs,jidxs = ival_idxs[x][n],jval_idxs[x][n]
+                        for y in range(len(iidxs)):
+                            if jidxs[y] != iidxs[y]:
+                                initial_perm[idx_list[x][iidxs[y]]] = idx_list[x][jidxs[y]]
+                            else:
+                                continue
+                initial_perm = tuple(initial_perm[k] if k in initial_perm else k for k in range(len(product_iweights)))
+                
+                # Remaining permutations can be made by permuting the indices found
+                # in ival_idxs in initial_perm.
+
+                for perms in product(*(permutations([idx_list[x][y] for y in ival_idxs[x][n]]) for x in range(len(idx_list)) for n in ival_idxs[x])):
+                    temp,pidx = [0 for k in range(len(product_iweights))],0
+                    for x in range(len(idx_list)):
+                        for n in ival_idxs[x]:
+                            for k in range(len(ival_idxs[x][n])):
+                                idx = ival_idxs[x][n][k]
+                                temp[idx_list[x][idx]] = initial_perm[perms[pidx][k]]
+                            pidx += 1
+                    ij_perms[(i,j)].append(tuple(temp))
+                
+    # Irreps of the symmetric group of degree n are given by partitions of n.
+    # The dimension of the Sn irrep is the number of standard Young tableaux
+    # that are possible to make with that partition. Different Young symmetrizers
+    # can be constructed with different Young tableaux. These combinations
+    # are accounted for by the first two for-loops. The next for-loop
+    # builds the upper-triangular of the projector matrix. These matrices
+    # are stored in highest_weight_state_symmetrizers.
+
+    highest_weight_state_symmetrizers = defaultdict(list)
+    for partitions in Sn_irreps:
+        for tableaux in product(*(tableaux_cache[irrep] for irrep in partitions)):
+
+            # The fact that the matrix is a projector comes from young_symmetrizer
+            # being a properly normalized Young symmetrizer.
+            Y = {perm: coeff for coeff,perm in young_symmetrizer(tableaux, idx_list)}
+            
+            row,col,val = [],[],[]
+            for i in range(len(selected_basis)):
+                ikey = tuple(x for idxs in idx_list for x in sorted(selected_basis[i][k] for k in idxs))
+                for j in perm_dict[ikey]:
+                    if j < i:
+                        continue
+                    else:
+                        num = sum(Y[p] for p in ij_perms[(i,j)] if p in Y)
+                        if abs(num) > EPS:
+                            row.append(i), col.append(j)
+                            # The other half of the diagonal is added at the end.
+                            if i==j:
+                                val.append(num/2)
+                            else:
+                                val.append(num)
+                        else:
+                            continue
+            symmetrizer = csr_array((val, (row,col)), shape=((len(selected_basis), len(selected_basis))), dtype=float)
+            
+            # Add the lower-triangular and store the matrix.
+            symmetrizer += symmetrizer.T
+            highest_weight_state_symmetrizers[partitions].append(symmetrizer)
+    
+    # RREF returns the reduced row echelon form of a matrix. This is only used for
+    # outer multiplicities greater than one, within the same symmetric group irrep.
+    def RREF(A):
+        # i gives index of current row to be put into normal form.
+        n_rows, n_cols = A.shape
+        i = 0
+        # Iterate over columns of A to find pivots (row index with leading term).
+        # Pivots are chosen based on maximum value found in column.
+        for j in range(n_cols):
+            pivot = np.argmax(abs(A[i:n_rows,j])) + i
+            max_at_pivot = abs(A[pivot,j])
+            # If max_at_pivot~0 then column must be zero vector.
+            if max_at_pivot < EPS:
+                A[i:n_rows,j] = np.zeros(n_rows-i)
+            else:
+                # If pivot is not current row then swap pivot and i
+                # so that pivot row is ith row.
+                if pivot != i:
+                    A[[pivot,i], j:n_cols] = A[[i,pivot], j:n_cols]
+                else:
+                    pass
+                # Make sure ith row has a leading 1.
+                A[i, j:n_cols] = A[i, j:n_cols]/A[i,j]
+                # Subtract multiples of ith reduced row from other rows
+                # to make all entries above/below leading 1 zero.
+                reduced_row = A[i, j:n_cols]
+                if i > 0:
+                    row_inds_above = range(i)
+                    A[row_inds_above, j:n_cols] = A[row_inds_above, j:n_cols] - np.outer(reduced_row, A[row_inds_above, j]).T
+                if i < n_rows-1:
+                    row_inds_below = range(i+1,n_rows)
+                    A[row_inds_below, j:n_cols] = A[row_inds_below, j:n_cols] - np.outer(reduced_row, A[row_inds_below, j]).T
+                else:
+                    pass
+                # Subsequent iterations will now
+                # find pivots in sub-matrix A[i:n_rows, j:n_cols].
+                i += 1
+            # Conditional for non-square matrices.
+            if i == n_rows:
+                break
+            else:
+                continue
+        return A
+
+    # Let P be a projection matrix. P can be written in the basis of vecs as Ptilde.
+    # Ptilde is still a projector with eigenvalues (tvals) zero and one. The
+    # eigenvectors (tvecs) with eigenvalue one give the coefficients of the linear
+    # combinations of vecs that are properly symmetrized according to P. The rest of
+    # the eigenvectors give the coefficients of the linear combinations of vecs
+    # that are orthogonal to the symmetrized vectors. These remaining orthogonal,
+    # unsymmetrized vectors can be fed to another projection matrix, and the
+    # algorithm proceeds as before.
+
+    # num_remaining tracks how many CGC vectors still need to be symmetrized.
+    # remaining_vecs are the remaining CGC vectors (as rows of an array).
+    # sym_vecs will be a list of individual symmetrized CGC vectors.
+
+    num_remaining = multiplicity
+    remaining_vecs = vecs.T
+    sym_vecs = []
+    for partitions in Sn_irreps:
+        mult = Sn_irreps[partitions]
+        for symmetrizer in highest_weight_state_symmetrizers[partitions]:
+
+            # Build Ptilde out of the Young symmetrizer and the remaining
+            # vectors. The eigenvalues tvals will be ones and zeros.
+
+            Ptilde = []
+            for i in range(num_remaining):
+                row = []
+                for j in range(num_remaining):
+                    row.append(remaining_vecs[i]@symmetrizer@remaining_vecs[j])
+                Ptilde.append(row)
+            tvals,tvecs = np.linalg.eigh(Ptilde)
+
+            # ones contains the indices of tvals where eigenvalues equal one.
+            # coeffs are the corresponding eigenvectors. symmetrized is an array
+            # whose rows are properly symmetrized CGCs. If the multiplicity (mult)
+            # of the symmetric group irrep is greater than one then the CGCs are
+            # further refined by passing them through RREF and Gram-Schmidt.
+            # Otherwise, ensure that the CGCs are normalized.
+
+            ones = np.where(np.isclose(tvals, 1.0))[0]
+            coeffs = tvecs[:,ones].T
+            symmetrized = coeffs@remaining_vecs
+            if mult > 1:
+                symmetrized = RREF(symmetrized)
+                symmetrized = np.linalg.qr(symmetrized.T)[0].T
+            else:
+                symmetrized /= np.linalg.norm(symmetrized)
+
+            # The phase convention is such that the CGC of the highest-weight
+            # product basis state is positive.
+
+            for k in range(mult):
+                max_state_idx = selected_basis.index(min(selected_basis[n] for n in range(len(selected_basis)) if abs(symmetrized[k][n]) > EPS))
+                if symmetrized[k][max_state_idx] < 0:
+                    symmetrized[k] *= -1
+                else:
+                    pass
+                sym_vecs.append(symmetrized[k])
+
+            # zeros contains the indices of tvals where eigenvalues equal zero.
+            # coeffs are the corresponding eigenvectors. remaining_vecs are turned
+            # into vectors that are orthogonal to the current symmetrized CGCs.
+
+            if num_remaining-mult == 0:
+                continue
+            else:
+                zeros = [k for k in range(len(tvals)) if k not in ones]
+                coeffs = tvecs[:,zeros].T
+                remaining_vecs = coeffs@remaining_vecs
+                num_remaining -= mult
+    vecs = np.array(sym_vecs)
 
     # Gather all nonzero CGCs for each multiplicity index.
     # A CGC counts as zero if abs(CGC) < EPS.
     
     cgc_dict = {}
     for a in range(multiplicity):
-        cgc_dict[a+1] = {selected_basis[i]: vecs[:,a][i] for i in range(len(selected_basis)) if abs(vecs[:,a][i]) > EPS}
+        cgc_dict[a+1] = {selected_basis[i]: vecs[a][i] for i in range(len(selected_basis)) if abs(vecs[a][i]) > EPS}
 
     # Save CGCs.
 
