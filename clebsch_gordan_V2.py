@@ -16,11 +16,349 @@ from pickle import load, dump
 
 # REFERENCE https://homepages.physik.uni-muenchen.de/~vondelft/PapersVonDelft/Alex2011.pdf
 EPS = 1e-10
+YoungTableau = list[list[int]]
 
 # Creates CGC_Data directory in directory of this script.
 script_directory = Path(__file__).resolve().parent
 data_directory = PurePath(script_directory, 'CGC_Data')
 Path(data_directory).mkdir(exist_ok=True)
+
+"""
+HELPER FUNCTIONS
+"""
+
+def _conjugate_partition(partition):
+    """Computes a conjugate partition (the partition corresponding to the
+    "transpose" of a Young tableau for the given partition).
+    """
+
+    # Whereas the partition gives the number of cells per row of a tableau,
+    # some calculations additionally need the number of cells per column,
+    # which is contained in the conjugate partition.
+
+    conjugate_partition = []
+    for col in range(1, partition[0]+1):
+        num_col_cells = 0
+        for num_row_cells in partition:
+            if num_row_cells >= col:
+                num_col_cells += 1
+            else:
+                continue
+        conjugate_partition.append(num_col_cells)
+
+    return conjugate_partition
+
+def _product_of_hook_lengths(partition):
+    """This nested for-loop finds the hook length for each cell of a tableau
+    for the partition and multiplies them all.
+    """
+
+    conjugate_partition = _conjugate_partition(partition)
+    hook_length_prod = 1
+    for i in range(len(partition)):
+        for j in range(partition[i]):
+            hook_length = partition[i] + conjugate_partition[j] - i - j - 1
+            hook_length_prod *= hook_length
+
+    return hook_length_prod
+
+def _tableau_data(tableau, extra_data=False):
+    """Finds the permutations that preserve the rows and columns of a tableau
+    as well as whether the tableau is row and/or column ordered.
+    With extra_data, inverses of the permutations and
+    a product of hook lengths are also returned.
+    """
+
+    # Gather initial data. Out of these variables, n is returned.
+    # tableau_T is the transpose of the tableau.
+
+    partition = [len(row) for row in tableau]
+    conjugate_partition = _conjugate_partition(partition)
+    tableau_T = [[tableau[j][i] for j in range(conjugate_partition[i])] for i in range(partition[0])]
+    n = sum(partition)
+
+    # Extra data includes the product of hook lengths of the tableau (necessary
+    # for normalization) and the inverse row and column permutations.
+
+    if extra_data:
+        hook_length_prod = _product_of_hook_lengths(partition)
+        inverse_row_permutations, inverse_col_permutations = [],[]
+    else:
+        pass
+
+    # row_word is the tableau, flattened row-wise.
+    # col_word is the tableau, flattened column-wise.
+    # is_row_ordered and is_col_ordered check if the lists
+    # are ordered from least to greatest.
+    # ~Definition 2
+
+    row_word = [i for row in tableau for i in row]
+    col_word = [i for col in tableau_T for i in col]
+    is_row_ordered = all(row_word[i] < row_word[i+1] for i in range(n-1))
+    is_col_ordered = all(col_word[i] < col_word[i+1] for i in range(n-1))
+
+    # row_permutations is a list of permutations that preserve the
+    # content of each row. col_permutations is a list of permutations
+    # that preserve the content of each column. They are built by joining
+    # all combinations X of disjoint permutations on each row/column.
+    # sorted_rows/cols sorts each row/column, for reference, to build
+    # the mapping that each X corresponds to. perm turns the mapping
+    # to the usual tuple version of a permutation. An inverse permutation
+    # is found by using the inverse mapping.
+
+    row_permutations = []
+    sorted_rows = [sorted(row) for row in tableau if len(row)>1]
+    for X in product(*(permutations(row) for row in tableau if len(row)>1)):
+        mapping = {sorted_rows[i][j]: X[i][j] for i in range(len(sorted_rows)) for j in range(partition[i]) if X[i][j] != sorted_rows[i][j]}
+        perm = tuple(mapping[i] if i in mapping else i for i in range(n))
+        row_permutations.append(perm)
+        if extra_data:
+            inverse_mapping = {v:k for k,v in mapping.items()}
+            inverse_row_permutations.append(tuple(inverse_mapping[i] if i in inverse_mapping else i for i in range(n)))
+        else:
+            continue
+
+    col_permutations = []
+    sorted_cols = [sorted(col) for col in tableau_T if len(col)>1]
+    for X in product(*(permutations(col) for col in tableau_T if len(col)>1)):
+        mapping = {sorted_cols[i][j]: X[i][j] for i in range(len(sorted_cols)) for j in range(conjugate_partition[i]) if X[i][j] != sorted_cols[i][j]}
+        perm = tuple(mapping[i] if i in mapping else i for i in range(n))
+        col_permutations.append(perm)
+        if extra_data:
+            inverse_mapping = {v:k for k,v in mapping.items()}
+            inverse_col_permutations.append(tuple(inverse_mapping[i] if i in inverse_mapping else i for i in range(n)))
+        else:
+            continue
+
+    if extra_data:
+        return n, row_permutations, col_permutations, is_row_ordered, is_col_ordered, inverse_row_permutations, inverse_col_permutations, hook_length_prod
+    else:
+        return n, row_permutations, col_permutations, is_row_ordered, is_col_ordered
+
+def _sgn(permutation):
+    """Calculates the sign of a permutation.
+    """
+
+    n = len(permutation)
+    num_inversions = 0
+    for i in range(n):
+        for j in range(i+1, n):
+            if permutation[i] > permutation[j]:
+                num_inversions += 1
+            else:
+                continue
+    if num_inversions % 2 == 0:
+        return 1
+    else:
+        return -1
+
+def _compose_two(p1, p2, n):
+    """Computes the equivalent permutation got by first applying p1 and then p2.
+    p1 and p2 need not be of equal lengths; n ensures that the final permutation
+    is of length n. Nevertheless, p1 and p2 should each contain integers 0,1,...,x.
+    """
+
+    if len(p1) == len(p2):
+        perm = tuple(p1[p2[i]] for i in range(len(p1)))
+    elif len(p1) > len(p2):
+        perm = tuple(p1[p2[i]] if i in p2 else p1[i] for i in range(len(p1)))
+    else:
+        perm = tuple(p1[p2[i]] if p2[i] in p1 else p2[i] for i in range(len(p2)))
+    if len(perm) == n:
+        return perm
+    else:
+        return perm + tuple(range(len(perm), n))
+
+def _reduce_perms(perms_lists, anti_idxs, n):
+    """Simplifies a product of linear combinations of permutations into a single
+    linear combination of distinct permutations. perms_lists is a list of
+    row- or column-preserving permutations. anti_idxs is a list of indices
+    of lists in perms_lists that contain column-preserving permutations;
+    these permutations act with a factor of their sign. As an expression,
+    (1 + p1 + p2 + ...) x (1 + p1 + p2 + ...) x ... is the input and the output
+    is a0*1 + a1*p1 + a2*p2 + ... returned as dictionary whose keys are the
+    distinct permutations pk and whose values are their coefficients ak.
+    """
+
+    # perms_lists is given such that the first list of permutations actually
+    # acts first. ordered reverses perms_lists to correct this. res is the
+    # final output; because the symmetrizer is so far unnormalized, its
+    # permutations' coefficients will be integers.
+    ordered = perms_lists[::-1]  
+    res = defaultdict(int)
+    for i in range(1,len(perms_lists)):
+        if i==1:
+            for p1,p2 in product(ordered[0], ordered[i]):
+                new = _compose_two(p1,p2,n)
+                if 0 in anti_idxs:
+                    res[new] += _sgn(p1)
+                elif i in anti_idxs:
+                    res[new] += _sgn(p2)
+                else:
+                    res[new] += 1
+            temp = res.copy()
+        else:
+            for p1,p2 in product(temp, ordered[i]):
+                new = _compose_two(p1,p2,n)
+                if new==p1:
+                    continue
+                elif i in anti_idxs:
+                    new_val = temp[new] + res[p1]*_sgn(p2)
+                else:
+                    new_val = temp[new] + res[p1]
+                if new_val == 0:
+                    del temp[new]
+                else:
+                    temp[new] = new_val
+            res = temp
+            temp = res.copy()
+    return dict(res)
+
+def _class_order(partition, n):
+    """Calculates the order of the conjugacy
+    class of the Sn irrep given by partition.
+    """
+
+    prod,cycle_tally = 1,Counter(partition)
+    for cycle_len, num in cycle_tally.items():
+        prod *= cycle_len**num * factorial(num)
+
+    return round(factorial(n)/prod)
+
+def _rim_hooks(partition, l):
+    """Finds the rim hooks of a given length l
+    for a given partition.
+    """
+
+    def partition_to_sequence(p):
+        s,num_rows = [],len(p)
+        for i in range(num_rows):
+            if i==0:
+                s += [1]*p[num_rows-1] + [0]
+            else:
+                s += [1]*(p[num_rows-i-1]- p[num_rows-i]) + [0]
+        return s
+    
+    def sequence_to_partition(s):
+        p,num_ones = [],0
+        for i in s:
+            if i==0:
+                p = [num_ones] + p
+            else:
+                num_ones += 1
+        return [x for x in p if x!=0]
+    
+    sequence = partition_to_sequence(partition)
+    rhooks = []
+    for i in range(len(sequence)-l):
+        if sequence[i]==1 and sequence[i+l]==0:
+            rhseq = sequence.copy()
+            rhseq[i],rhseq[i+l] = 0,1
+            length = sequence[i:i+l+1].count(0)-1
+            rhooks.append([sequence_to_partition(rhseq), length])
+        else:
+            continue
+
+    return rhooks
+
+def _class_character(partition, Sn_partition):
+    """Computes the character of an Sn_partition
+    in the irrep given by partition recursively.
+    """
+
+    if len(partition)==0:
+        return 1
+    else:
+        new_irreps = _rim_hooks(partition, Sn_partition[0])
+        new_Sn_irrep = Sn_partition[1:]
+        character = sum((-1)**l * _class_character(p,new_Sn_irrep) for p,l in new_irreps)
+        return character
+
+def _find_iweight(zweight):
+    """Finds the i-weight corresponding to a dominant weight,
+    assumed to be the highest weight of an irrep.
+    """
+
+    pweight,count = [0],-1
+    for i in range(len(zweight)-1,-1,-1):
+        if i==len(zweight)-1:
+            pweight.append(int(2*zweight[i]))
+        else:
+            pweight.append(int(2*zweight[i] + pweight[count+1]))
+        count += 1
+
+    return tuple(pweight[::-1])
+
+def _Weyl_orbit(zweight, N, simple_roots):
+    """Finds Weyl orbit of a given SU(N) z-weight.
+    """
+
+    orbit,weights = [np.array(zweight)],[np.array(zweight)]
+    while len(weights) != 0:
+        trial_weights,new_weights = [],[]
+        for w in weights:
+            if not np.any(w):
+                trial_weights.append(None)
+            else:
+                reflections = []
+                for i in range(N-1):
+                    reflections.append(w - w[i]*simple_roots[i])
+                trial_weights.append(reflections)
+        for i in range(N-1):
+            for j in range(len(weights)):
+                if weights[j][i] <= 0 or trial_weights[j] is None:
+                    continue
+                else:
+                    check = trial_weights[j][i][i+1:N-1]
+                    if np.all(check==abs(check)):
+                        new_weights.append(trial_weights[j][i])
+                    else:
+                        continue
+        weights = new_weights
+        if len(weights) != 0:
+            orbit += weights
+        else:
+            continue
+
+    return orbit
+
+def _Adams(k, N, dominant_zweights, simple_roots):
+    """Applies the kth Adams operator to the irrep (iweight).
+    """
+
+    longest_Weyl_word = [j for i in range(N-2,-1,-1) for j in range(i+1)]
+
+    def v_decomp(dweight):
+        poly = [[w,1] for w in _Weyl_orbit(dweight, N, simple_roots)]
+        for i in range(len(longest_Weyl_word)):
+            for j in range(len(poly)):
+                if poly[j][1] != 0:
+                    letter = longest_Weyl_word[i]
+                    if poly[j][0][letter] >= 0:
+                        continue
+                    elif poly[j][0][letter] == -0.5:
+                        poly[j][1] = 0
+                    elif poly[j][0][letter] <= -1:
+                        factor = poly[j][0][letter] + 0.5
+                        poly[j][1] *= -1
+                        poly[j][0] = poly[j][0] - factor*simple_roots[letter]
+                    else:
+                        continue
+                else:
+                    continue
+        for monomial,coeff in poly:
+            if coeff == 0:
+                continue
+            else:
+                yield _find_iweight(monomial.tolist()), coeff
+
+    polynomial = defaultdict(int)
+    for dweight,mult in dominant_zweights.items():
+        scaled_dweight = [k*x for x in dweight]
+        for R,coeff in v_decomp(scaled_dweight):
+            polynomial[R] += coeff*mult
+
+    return {R:num for R,num in polynomial.items() if num != 0}
 
 """
 PROPERTIES AND OPERATIONS
@@ -377,37 +715,18 @@ def calc_Sn_dimension(partition: list) -> int:
     given by an integer partition of n via the hook length formula.
     """
 
+    if not all(partition[i] >= partition[i+1] for i in range(len(partition)-1)):
+        raise ValueError('Integers in partition must be sorted greatest to least.')
+
     # Gather initial data.
     n = sum(partition)
-    num_cols = partition[0]
-    num_rows = len(partition)
-
-    # Whereas the partition gives the number of cells per row,
-    # the formula additionally needs the number of cells per column,
-    # which is contained in the conjugate partition.
-    conjugate_partition = []
-    for col in range(1, num_cols+1):
-        num_col_cells = 0
-        for num_row_cells in partition:
-            if num_row_cells >= col:
-                num_col_cells += 1
-            else:
-                continue
-        conjugate_partition.append(num_col_cells)
-
-    # This nested for-loop finds the hook length for each cell
-    # and multiplies them all.
-    hook_length_prod = 1
-    for i in range(num_rows):
-        for j in range(partition[i]):
-            hook_length = partition[i] + conjugate_partition[j] - i - j - 1
-            hook_length_prod *= hook_length
+    hook_length_prod = _product_of_hook_lengths(partition)
 
     # Compute the hook length formula and round to ensure integral dimension.
     dim = factorial(n)/hook_length_prod
     return round(dim)
 
-def find_tableaux(partition: list) -> list:
+def find_tableaux(partition: list) -> list[YoungTableau]:
     """Generates standard Young tableaux given a partition.
     Returns a list of the tableaux.
     """
@@ -415,25 +734,19 @@ def find_tableaux(partition: list) -> list:
     # This code is largely adapted from the PermutationGroup.m file
     # of GroupMath, https://renatofonseca.net/groupmath
 
+    if not all(partition[i] >= partition[i+1] for i in range(len(partition)-1)):
+        raise ValueError('Integers in partition must be sorted greatest to least.')
+
     # Gather initial data.
     n = sum(partition)
-    num_cols = partition[0]
     num_rows = len(partition)
     zeros = [0 for i in range(n)]
+    conjugate_partition = _conjugate_partition(partition)
 
-    # Compute conjugate partition.
-    conjugate_partition = []
-    for col in range(1, num_cols+1):
-        num_col_cells = 0
-        for num_row_cells in partition:
-            if num_row_cells >= col:
-                num_col_cells += 1
-            else:
-                continue
-        conjugate_partition.append(num_col_cells)
-
-    # Compute canonical Young tableau.
-    canonical,count = [],0
+    # Compute canonical Young tableau. This tableau has all integers
+    # from 0 to n-1 incrementally placed along the rows, top to bottom.
+    # For instance, [[0,1,2],[3,4],[5]].
+    canonical, count = [], 0
     for i in range(num_rows):
         row = []
         for j in range(partition[i]):
@@ -525,7 +838,7 @@ def find_tableaux(partition: list) -> list:
 
     return standard_tableaux
 
-def young_symmetrizer(tableaux: list[list[list]], idx_list: list[list]) -> Generator[tuple[float, tuple]]:
+def young_symmetrizer(tableaux: list[YoungTableau], idx_list: list[list]) -> Generator[tuple[float, tuple]]:
     """Generates the Young symmetrizer corresponding to a list of standard
     Young tableaux. This is a generator function; it yields the symmetrizer
     as a sum of (coefficient, permutation), and an example of its use
@@ -546,161 +859,6 @@ def young_symmetrizer(tableaux: list[list[list]], idx_list: list[list]) -> Gener
     # The algorithm presented in https://arxiv.org/pdf/1307.6147
     # is implemented and referenced throughout this code.
 
-    # Finds the permutations that preserve the rows and columns of a tableau
-    # as well as whether the tableau is row and/or column ordered. With extra_data,
-    # inverses of the permutations and a product of hook lengths are also returned.
-    def tableau_data(tableau, extra_data=False):
-
-        # Gather initial data. Out of these variables, n is returned.
-        # tableau_T is the transpose of the tableau.
-
-        partition, conjugate_partition = [len(row) for row in tableau], []
-        n, num_cols, num_rows = sum(partition), partition[0], len(partition)
-        for col in range(1, num_cols+1):
-            num_col_cells = 0
-            for num_row_cells in partition:
-                if num_row_cells >= col:
-                    num_col_cells += 1
-                else:
-                    continue
-            conjugate_partition.append(num_col_cells)
-        tableau_T = [[tableau[j][i] for j in range(conjugate_partition[i])] for i in range(num_cols)]
-
-        # Extra data includes the product of hook lengths of the tableau (necessary
-        # for normalization) and the inverse row and column permutations.
-
-        if extra_data:
-            hook_length_prod = 1
-            for i in range(num_rows):
-                for j in range(partition[i]):
-                    hook_length = partition[i] + conjugate_partition[j] - i - j - 1
-                    hook_length_prod *= hook_length
-            inverse_row_permutations, inverse_col_permutations = [],[]
-        else:
-            pass
-
-        # row_word is the tableau, flattened row-wise.
-        # col_word is the tableau, flattened column-wise.
-        # is_row_ordered and is_col_ordered check if the lists
-        # are ordered from least to greatest.
-        # ~Definition 2
-
-        row_word = [i for row in tableau for i in row]
-        col_word = [i for col in tableau_T for i in col]
-        is_row_ordered = all(row_word[i] < row_word[i+1] for i in range(n-1))
-        is_col_ordered = all(col_word[i] < col_word[i+1] for i in range(n-1))
-
-        # row_permutations is a list of permutations that preserve the
-        # content of each row. col_permutations is a list of permutations
-        # that preserve the content of each column. They are built by joining
-        # all combinations X of disjoint permutations on each row/column.
-        # sorted_rows/cols sorts each row/column, for reference, to build
-        # the mapping that each X corresponds to. perm turns the mapping
-        # to the usual tuple version of a permutation. An inverse permutation
-        # is found by using the inverse mapping.
-
-        row_permutations = []
-        sorted_rows = [sorted(row) for row in tableau if len(row)>1]
-        for X in product(*(permutations(row) for row in tableau if len(row)>1)):
-            mapping = {sorted_rows[i][j]: X[i][j] for i in range(len(sorted_rows)) for j in range(partition[i]) if X[i][j] != sorted_rows[i][j]}
-            perm = tuple(mapping[i] if i in mapping else i for i in range(n))
-            row_permutations.append(perm)
-            if extra_data:
-                inverse_mapping = {v:k for k,v in mapping.items()}
-                inverse_row_permutations.append(tuple(inverse_mapping[i] if i in inverse_mapping else i for i in range(n)))
-            else:
-                continue
-
-        col_permutations = []
-        sorted_cols = [sorted(col) for col in tableau_T if len(col)>1]
-        for X in product(*(permutations(col) for col in tableau_T if len(col)>1)):
-            mapping = {sorted_cols[i][j]: X[i][j] for i in range(len(sorted_cols)) for j in range(conjugate_partition[i]) if X[i][j] != sorted_cols[i][j]}
-            perm = tuple(mapping[i] if i in mapping else i for i in range(n))
-            col_permutations.append(perm)
-            if extra_data:
-                inverse_mapping = {v:k for k,v in mapping.items()}
-                inverse_col_permutations.append(tuple(inverse_mapping[i] if i in inverse_mapping else i for i in range(n)))
-            else:
-                continue
-
-        if extra_data:
-            return n, row_permutations, col_permutations, is_row_ordered, is_col_ordered, inverse_row_permutations, inverse_col_permutations, hook_length_prod
-        else:
-            return n, row_permutations, col_permutations, is_row_ordered, is_col_ordered
-
-    # Calculates the sign of a permutation.
-    def sgn(permutation):
-        n = len(permutation)
-        num_inversions = 0
-        for i in range(n):
-            for j in range(i+1, n):
-                if permutation[i] > permutation[j]:
-                    num_inversions += 1
-                else:
-                    continue
-        if num_inversions % 2 == 0:
-            return 1
-        else:
-            return -1
-
-    # Computes the equivalent permutation got by first applying p1 and then p2.
-    # p1 and p2 need not be of equal lengths; n ensures that the final permutation
-    # is of length n. Nevertheless, p1 and p2 should each contain integers 0,1,...,x.
-    def compose_two(p1, p2, n):
-        if len(p1) == len(p2):
-            perm = tuple(p1[p2[i]] for i in range(len(p1)))
-        elif len(p1) > len(p2):
-            perm = tuple(p1[p2[i]] if i in p2 else p1[i] for i in range(len(p1)))
-        else:
-            perm = tuple(p1[p2[i]] if p2[i] in p1 else p2[i] for i in range(len(p2)))
-        if len(perm) == n:
-            return perm
-        else:
-            return perm + tuple(range(len(perm), n))
-        
-    # Simplifies a product of linear combinations of permutations into a single
-    # linear combination of distinct permutations. perms_lists is a list of
-    # row- or column-preserving permutations. anti_idxs is a list of indices
-    # of lists in perms_lists that contain column-preserving permutations;
-    # these permutations act with a factor of their sign. As an expression,
-    # (1 + p1 + p2 + ...) x (1 + p1 + p2 + ...) x ... is the input and the output
-    # is a0*1 + a1*p1 + a2*p2 + ... returned as dictionary whose keys are the
-    # distinct permutations pk and whose values are their coefficients ak.
-    def reduce_perms(perms_lists, anti_idxs, n):
-        # perms_lists is given such that the first list of permutations actually
-        # acts first. ordered reverses perms_lists to correct this. res is the
-        # final output; because the symmetrizer is so far unnormalized, its
-        # permutations' coefficients will be integers.
-        ordered = perms_lists[::-1]  
-        res = defaultdict(int)
-        for i in range(1,len(perms_lists)):
-            if i==1:
-                for p1,p2 in product(ordered[0], ordered[i]):
-                    new = compose_two(p1,p2,n)
-                    if 0 in anti_idxs:
-                        res[new] += sgn(p1)
-                    elif i in anti_idxs:
-                        res[new] += sgn(p2)
-                    else:
-                        res[new] += 1
-                temp = res.copy()
-            else:
-                for p1,p2 in product(temp, ordered[i]):
-                    new = compose_two(p1,p2,n)
-                    if new==p1:
-                        continue
-                    elif i in anti_idxs:
-                        new_val = temp[new] + res[p1]*sgn(p2)
-                    else:
-                        new_val = temp[new] + res[p1]
-                    if new_val == 0:
-                        del temp[new]
-                    else:
-                        temp[new] = new_val
-                res = temp
-                temp = res.copy()
-        return dict(res)
-
     symmetrizers = []
     norm = 1
 
@@ -711,7 +869,7 @@ def young_symmetrizer(tableaux: list[list[list]], idx_list: list[list]) -> Gener
         # The usual Young symmetrizers are built with the convention where
         # column permutations are applied first, followed by row permutations.
         # ~Eq. (26)
-        n, row_perms, col_perms, is_row_ordered, is_col_ordered, inv_row_perms, inv_col_perms, hook_length_prod = tableau_data(tableau, extra_data=True)
+        n, row_perms, col_perms, is_row_ordered, is_col_ordered, inv_row_perms, inv_col_perms, hook_length_prod = _tableau_data(tableau, extra_data=True)
 
         # If the tableau is already row-ordered or column-ordered,
         # then the Young symmetrizer can be immediately built.
@@ -752,7 +910,7 @@ def young_symmetrizer(tableaux: list[list[list]], idx_list: list[list]) -> Gener
                     else:
                         parent_tableau.append(row)
                 child_tab = parent_tableau
-                child_n, parent_row_perms, parent_col_perms, is_row_ordered, is_col_ordered = tableau_data(parent_tableau)
+                child_n, parent_row_perms, parent_col_perms, is_row_ordered, is_col_ordered = _tableau_data(parent_tableau)
                 ancestor_perms.append([parent_row_perms, parent_col_perms])
                 M += 1
 
@@ -788,7 +946,7 @@ def young_symmetrizer(tableaux: list[list[list]], idx_list: list[list]) -> Gener
         # The normalization factor norm can be found by taking the coefficient of
         # identity permutation and the product of hook lengths for tableau.
 
-        combined_perms = reduce_perms(perms_lists, anti_idxs, n)
+        combined_perms = _reduce_perms(perms_lists, anti_idxs, n)
         id_coeff = combined_perms[tuple(i for i in range(n))]
         norm *= 1/(id_coeff*hook_length_prod)
         symmetrizers.append(combined_perms)
@@ -826,7 +984,6 @@ def find_plethysms(iweight: tuple, n: int) -> dict[tuple, dict[tuple, int]]:
     # Gather initial data.
     N = len(iweight)
     fundamental_rep = tuple(1 if i==0 else 0 for i in range(N))
-    longest_Weyl_word = [j for i in range(N-2,-1,-1) for j in range(i+1)]
 
     # The dominant weights are z-weights whose entries are all nonnegative.
     # dominant_zweights records these weights as well as their multiplicities.
@@ -840,140 +997,11 @@ def find_plethysms(iweight: tuple, n: int) -> dict[tuple, dict[tuple, int]]:
 
     # Simple roots can be extracted from the z-weights of the
     # fundamental representation.
-    simple_roots,fund_basis = [],find_gt_patterns(fundamental_rep)
+    simple_roots, fund_basis = [], find_gt_patterns(fundamental_rep)
     for i in range(N-1):
         wi = np.array(calc_weight(fund_basis[i], 'z'))
         wi_1 = np.array(calc_weight(fund_basis[i+1], 'z'))
         simple_roots.append(2*(wi - wi_1))
-
-    # Calculates the order of the conjugacy
-    # class of the Sn irrep given by partition.
-    def class_order(partition):
-        prod,cycle_tally = 1,Counter(partition)
-        for cycle_len, num in cycle_tally.items():
-            prod *= cycle_len**num * factorial(num)
-        return round(factorial(n)/prod)
-    
-    # Finds the rim hooks of a given length l
-    # for a given partition.
-    def rim_hooks(partition, l):
-
-        def partition_to_sequence(p):
-            s,num_rows = [],len(p)
-            for i in range(num_rows):
-                if i==0:
-                    s += [1]*p[num_rows-1] + [0]
-                else:
-                    s += [1]*(p[num_rows-i-1]- p[num_rows-i]) + [0]
-            return s
-        
-        def sequence_to_partition(s):
-            p,num_ones = [],0
-            for i in s:
-                if i==0:
-                    p = [num_ones] + p
-                else:
-                    num_ones += 1
-            return [x for x in p if x!=0]
-        
-        sequence = partition_to_sequence(partition)
-        rhooks = []
-        for i in range(len(sequence)-l):
-            if sequence[i]==1 and sequence[i+l]==0:
-                rhseq = sequence.copy()
-                rhseq[i],rhseq[i+l] = 0,1
-                length = sequence[i:i+l+1].count(0)-1
-                rhooks.append([sequence_to_partition(rhseq), length])
-            else:
-                continue
-        return rhooks
-
-    # Computes the character of an Sn_partition
-    # in the irrep given by partition recursively.
-    def class_character(partition, Sn_partition):
-        if len(partition)==0:
-            return 1
-        else:
-            new_irreps = rim_hooks(partition, Sn_partition[0])
-            new_Sn_irrep = Sn_partition[1:]
-            character = sum((-1)**l * class_character(p,new_Sn_irrep) for p,l in new_irreps)
-            return character
-
-    # Finds the i-weight corresponding to a dominant weight,
-    # assumed to be the highest weight of an irrep.
-    def find_iweight(zweight):
-        pweight,count = [0],-1
-        for i in range(len(zweight)-1,-1,-1):
-            if i==len(zweight)-1:
-                pweight.append(int(2*zweight[i]))
-            else:
-                pweight.append(int(2*zweight[i] + pweight[count+1]))
-            count += 1
-        return tuple(pweight[::-1])
-
-    # Finds Weyl orbit of a given z-weight.
-    def Weyl_orbit(zweight):
-        orbit,weights = [np.array(zweight)],[np.array(zweight)]
-        while len(weights) != 0:
-            trial_weights,new_weights = [],[]
-            for w in weights:
-                if not np.any(w):
-                    trial_weights.append(None)
-                else:
-                    reflections = []
-                    for i in range(N-1):
-                        reflections.append(w - w[i]*simple_roots[i])
-                    trial_weights.append(reflections)
-            for i in range(N-1):
-                for j in range(len(weights)):
-                    if weights[j][i] <= 0 or trial_weights[j] is None:
-                        continue
-                    else:
-                        check = trial_weights[j][i][i+1:N-1]
-                        if np.all(check==abs(check)):
-                            new_weights.append(trial_weights[j][i])
-                        else:
-                            continue
-            weights = new_weights
-            if len(weights) != 0:
-                orbit += weights
-            else:
-                continue
-        return orbit
-
-    # Applies the kth Adams operator to the irrep (iweight).
-    def Adams(k):
-
-        def v_decomp(dweight):
-            poly = [[w,1] for w in Weyl_orbit(dweight)]
-            for i in range(len(longest_Weyl_word)):
-                for j in range(len(poly)):
-                    if poly[j][1] != 0:
-                        letter = longest_Weyl_word[i]
-                        if poly[j][0][letter] >= 0:
-                            continue
-                        elif poly[j][0][letter] == -0.5:
-                            poly[j][1] = 0
-                        elif poly[j][0][letter] <= -1:
-                            factor = poly[j][0][letter] + 0.5
-                            poly[j][1] *= -1
-                            poly[j][0] = poly[j][0] - factor*simple_roots[letter]
-                        else:
-                            continue
-                    else:
-                        continue
-            for monomial,coeff in poly:
-                if coeff == 0:
-                    continue
-                else:
-                    yield find_iweight(monomial.tolist()), coeff
-
-        polynomial = defaultdict(int)
-        for dweight,mult in dominant_zweights.items():
-            scaled_dweight = [k*x for x in dweight]
-            for R,coeff in v_decomp(scaled_dweight):
-                polynomial[R] += coeff*mult
-        return {R:num for R,num in polynomial.items() if num != 0}
 
     # A plethysm has a polynomial where each term is an SU(N) irrep with
     # a multiplicity coefficient. The formula for the polynomial can be found
@@ -983,8 +1011,8 @@ def find_plethysms(iweight: tuple, n: int) -> dict[tuple, dict[tuple, int]]:
     # decomp_dict stores all direct-sum decompositions. part_dict effectively
     # evaluates the formula once, storing each term from it, up to a coefficient.
 
-    Adams_dict = {k: Adams(k) for k in range(1,n+1)}
-    part_dict,decomp_dict = {},{}
+    Adams_dict = {k: _Adams(k, N, dominant_zweights, simple_roots) for k in range(1,n+1)}
+    part_dict, decomp_dict = {}, {}
 
     # The formula may produce a direct product of (direct-sum) polynomials
     # of the form (R1 + R2 + R3 + ...) x (S1 + S2 + S3 + ...) x ...
@@ -1044,7 +1072,7 @@ def find_plethysms(iweight: tuple, n: int) -> dict[tuple, dict[tuple, int]]:
     for partition in find_partitions(n):
         plethysm = defaultdict(float)
         for P in find_partitions(n):
-            coeff = class_order(P)*class_character(partition,P)/factorial(n)
+            coeff = _class_order(P,n)*_class_character(partition,P)/factorial(n)
             if coeff == 0:
                 continue
             else:
