@@ -856,7 +856,7 @@ def young_symmetrizer(tableaux: list[YoungTableau], idx_list: list[list]) -> Gen
     one tableau. The symmetrizer is a projector and is properly normalized.
     """
 
-    # The algorithm presented in https://arxiv.org/pdf/1307.6147
+    # The algorithm presented in https://arxiv.org/pdf/1610.10088
     # is implemented and referenced throughout this code.
 
     symmetrizers = []
