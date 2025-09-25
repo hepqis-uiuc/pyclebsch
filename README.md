@@ -21,3 +21,6 @@ After setting up WSL there is a checklist of programs you may need before procee
 1. Download / update Git by running `sudo apt-get install git`.
 2. Download / update Python3 by running `sudo apt install python3 python3-pip`
 3. Download the venv package by running `sudo apt install python3.10-venv`
+
+## Usage
+There is a small script called run.py which demonstrates standard usage of some of the functionality of this package. We plan on adding more documentation in the future.
