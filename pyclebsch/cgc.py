@@ -1,359 +1,42 @@
-"""
-IMPORTS
-"""
-
 import numpy as np
 from scipy.sparse import csr_array
 from scipy.sparse.linalg import eigsh
-from itertools import product, combinations
+from itertools import product, permutations
 from collections import Counter, defaultdict
-from functools import reduce
 from more_itertools import locate, product_index
 from pathlib import Path, PurePath
 from pickle import load, dump
 
-# REFERENCE https://homepages.physik.uni-muenchen.de/~vondelft/PapersVonDelft/Alex2011.pdf
+from pyclebsch.su_n_operators import calc_dimension, calc_weight, find_gt_patterns, find_direct_sum, find_symmetry_direct_sum, ladder_op
+from pyclebsch.symmetric_group.tableaux import find_tableaux
+from pyclebsch.symmetric_group.young_symmetrizer import young_symmetrizer
+
 EPS = 1e-10
 
 # Creates CGC_Data directory in directory of this script.
-script_directory = Path(__file__).resolve().parent
-data_directory = PurePath(script_directory, 'CGC_Data')
-Path(data_directory).mkdir(exist_ok=True)
+def _create_cgc_data_directory():
+    script_directory = Path(__file__).resolve().parent.parent
+    data_directory = PurePath(script_directory, 'CGC_Data')
+    Path(data_directory).mkdir(exist_ok=True)
 
-"""
-PROPERTIES AND OPERATIONS
-"""
+    return data_directory
 
-def calc_dimension(iweight: tuple) -> int:
-    """Returns dimension of an irrep.
-    ~Eq. (22)
-    """
-
-    dim = 1
-    for j in range(1, len(iweight)):
-        for jp in range(j):
-            dim *= 1 + (iweight[jp] - iweight[j])/(j - jp)
-
-    return round(dim)
-
-def calc_weight(gt_pattern: list[list], kind: str) -> list:
-    """Returns the weight of a basis state of an irrep.
-    The basis state is given as a gt_pattern.
-    The weight can be either a z-weight (kind='z') or a p-weight (kind='p').
-    ~Eqs. (24)-(25)
-    """
-
-    weight = []
-    N = len(gt_pattern)
-
-    # Weights are returned as if the basis state were acted on by
-    # J(1)z, ..., J(N-1)z in that order. However, J1z corresponds to
-    # the last row of a GT-pattern. Hence, the loops begin at N-1.
-
-    if kind == 'z':
-        for k in range(N-1, 0, -1):
-            if k==N-1:
-                weight.append(sum(gt_pattern[k]) - sum(gt_pattern[k-1])/2)
-            else:
-                weight.append(sum(gt_pattern[k]) - (sum(gt_pattern[k-1]) + sum(gt_pattern[k+1]))/2)
-        return weight
-    
-    elif kind == 'p':
-        for l in range(N-1, -1, -1):
-            if l==N-1:
-                weight.append(sum(gt_pattern[l]))
-            else:
-                weight.append(sum(gt_pattern[l]) - sum(gt_pattern[l+1]))
-        return weight
-    
-    else:
-        raise ValueError('Invalid weight kind.')
-
-def find_gt_patterns(iweight: tuple) -> list[list[list]]:
-    """Creates all GT-patterns for an irrep.
-    ~Eqs. (20)-(21)
-    """
-
-    gt_patterns = []
-
-    # find_next_rows recursively appends valid GT-patterns to gt_patterns.
-    # It starts with the i-weight of the irrep. It then uses the
-    # betweenness condition to find valid next rows in the GT-patterns.
-    # Once the last row is found, the GT-pattern is appended.
-
-    def find_next_rows(row, prev_rows=[]):
-        if len(row)==1:
-            gt_patterns.append(prev_rows + [row])
-        else:
-            for next_row in product(*[range(row[j], row[j+1]-1, -1) for j in range(len(row)-1)]):
-                find_next_rows(list(next_row), prev_rows + [row])
-    
-    find_next_rows(list(iweight))
-
-    # GT-patterns are sorted based on their p-weight (lexicographically)
-    # such that the highest-weight state is the first in the list.
-    # For states with equal p-weight, their GT-patterns are sorted lexicographically.
-    
-    gt_patterns.sort(key=lambda pat: calc_weight(pat, 'p'), reverse=True)
-
-    return gt_patterns
-
-def ladder_op(gt_patterns: list[list[list]], k: int, kind: str) -> list:
-    """Applies J(k)+- to a direct-product basis state.
-    gt_patterns is assumed to be a list of GT-patterns, even if
-    the basis state is that of a single irrep. The allowed values
-    of k are 1, ..., N-1. kind is '+' for raising operators or
-    '-' for lowering operators. Returns a list of [coefficient,
-    new direct-product basis state].
-    ~Eqs. (28)-(29)
-    """
-
-    # J(k)+- acts on the kth row of the GT-pattern.
-    # On a direct-product basis state, A x B x C,
-    # J(k)+- acts as (J@A) x B x C + A x (J@B) x C + A x B x (J@C).
-
-    linear_combination = []
-    for i in range(len(gt_patterns)):
-        pattern = gt_patterns[i]
-        N = len(pattern[0])
-
-        # row is the kth row of the GT-pattern.
-        # prow (previous row) is the (k-1)th row of the GT-pattern.
-        # nrow (next row) is the (k+1)th row of the GT-pattern.
-        # If k=N-1, then nrow does not exist, so make nrow the empty list.
-
-        row,prow = pattern[k],pattern[k-1]
-        nrow = pattern[k+1] if k<N-1 else []
-        new_rows,coeffs = [],[]
-
-        for j in range(len(row)):
-            if kind=='+' and prow[j] >= row[j]+1 >= prow[j+1]:
-                coeff = np.prod([prow[jp] - row[j] + j - jp for jp in range(len(prow))])
-                coeff *= np.prod([nrow[jp] - row[j] + j - jp - 1 for jp in range(len(nrow))])
-                coeff /= np.prod([(row[jp] - row[j] + j - jp)*(row[jp] - row[j] + j - jp - 1) for jp in range(len(row)) if jp != j])
-                if coeff == 0:
-                    continue
-                else:
-                    new_rows.append([row[jp]+1 if jp==j else row[jp] for jp in range(len(row))])
-                    coeffs.append(np.sqrt(-coeff))
-            elif kind=='-' and prow[j] >= row[j]-1 >= prow[j+1]:
-                coeff = np.prod([prow[jp] - row[j] + j - jp + 1 for jp in range(len(prow))])
-                coeff *= np.prod([nrow[jp] - row[j] + j - jp for jp in range(len(nrow))])
-                coeff /= np.prod([(row[jp] - row[j] + j - jp + 1)*(row[jp] - row[j] + j - jp) for jp in range(len(row)) if jp != j])
-                if coeff == 0:
-                    continue
-                else:
-                    new_rows.append([row[jp]-1 if jp==j else row[jp] for jp in range(len(row))])
-                    coeffs.append(np.sqrt(-coeff))
-        
-        for row,coeff in zip(new_rows,coeffs):
-            new_pat = pattern[0:k] + [row] + pattern[k+1:]
-            patterns = gt_patterns[0:i] + [new_pat] + gt_patterns[i+1:]
-            linear_combination.append([coeff,patterns])
-
-    return linear_combination
-
-def find_suN_basis(iweight: tuple) -> list[csr_array]:
-    """Returns a basis for an irrep of su(N).
-    The basis matrices are returned as orthogonal sparse arrays,
-    normalized to 0.5 in the fundamental representation.
-    ~Eqs. (16)-(18)
-    """
-
-    # A matrix, T, has elements Tij. The indices correspond to
-    # basis states of the irrep. i=0 corresponds to the highest-weight
-    # state, and i=N-1 corresponds to the lowest-weight state.
-    # The overall order of the basis states comes from
-    # the output of find_gt_patterns.
-
-    N = len(iweight)
-    D = calc_dimension(iweight)
-    irrep_basis = find_gt_patterns(iweight)
-
-    # Find N-1 diagonal basis matrices. Their elements are given by
-    # the z-weights of each basis state, which are eigenvalues
-    # of the N-1 J(k)z operators.
-
-    Jz_list = []
-    for k in range(N-1):
-        rows,cols,vals = [],[],[]
-        for idx in range(D):
-            state = irrep_basis[idx]
-            num = calc_weight(state, 'z')[k]
-            rows.append(idx), cols.append(idx), vals.append(num)
-        Jz_list.append(csr_array((vals, (rows,cols))))
-
-    # Find N(N-1) off-diagonal basis matrices. N-1 of them are sums of the
-    # J(k)+- operators, whose elements <out| J(k)+- |in> can be
-    # read off the output of ladder_op. Because su(N) matrices are Hermitian,
-    # only the J(k)+ elements are necessary.
-
-    Jp_list = []
-    for k in range(N-1,0,-1):
-        rows,cols,vals = [],[],[]
-        for state in irrep_basis:
-            col_idx = irrep_basis.index(state)
-            for num, new_state_in_list in ladder_op([state],k,'+'):
-                row_idx = irrep_basis.index(new_state_in_list[0])
-                rows.append(row_idx)
-                cols.append(col_idx)
-                vals.append(num)
-        Jp_list.append(csr_array((vals, (rows,cols)), shape=(D,D)))
-
-    basis = []
-    in_prod = lambda A,B: (A@B).trace()
-    com = lambda A,B: A@B - B@A
-
-    # To orthogonalize the N-1 Jz matrices, use Gram-Schmidt.
-    # The normalization of the Jz matrices is kept, however.
-
-    if D==1:
-        basis += Jz_list
-    else:
-        for Jz in Jz_list:
-            M = Jz - sum(in_prod(Jz,V)/in_prod(V,V)*V for V in basis)
-            M *= np.sqrt(in_prod(Jz,Jz)/in_prod(M,M))
-            basis.append(M)
-    
-    # Each J(k)+ matrix gives two basis matrices, coming from
-    # [J(k)+ + J(k)-]/2 and -i[J(k)+ - J(k)-]/2. Note that
-    # J(k)- = [J(k)+]^T because the output of ladder_op is real.
-    # In total, this gives 2(N-1) more basis matrices.
-
-    for Jp in Jp_list:
-        basis.append(0.5*(Jp + Jp.T))
-        basis.append(-0.5j*(Jp - Jp.T))
-
-    # Unique nested commutations of the J(k)+ matrices lead to
-    # the rest of the basis matrices (for N>2). k1 and k2 index
-    # two J(k)+ matrices. V is the nested commutator
-    # [J(k1)+, [J(k1+1)+, [J(k1+2)+, ..., [J(k2-1)+, J(k2)+]]]]
-    # Finally, two basis matrices are derived from V, giving
-    # the remaining (N-2)(N-1) basis matrices.
-
-    for k1,k2 in combinations(range(N-1),2):
-        V = reduce(com, [Jp_list[k] for k in range(k1,k2+1)])
-        basis.append(0.5*(V + V.T))
-        basis.append(-0.5j*(V - V.T))
-
-    return basis
-
-def find_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> dict[tuple, int]:
-    """Decomposes a direct product of irreps (product_iweights) into a
-    direct sum of irreps. Returns a dictionary whose keys are the irreps
-    appearing in the direct sum, and whose values are the multiplicities of
-    the irreps. If sum_iweight is given, then the multiplicity (possibly 0)
-    of that irrep is returned.
-    ~Pg. 11
-    """
-
-    # For efficiency, sort the irreps from lowest weight to highest weight.
-    # decomp_memo records decompositions done throughout the algorithm, so
-    # repititions are avoided. gt_memo records GT-patterns of irreps
-    # encountered in the algorithm to avoid duplicate calculations.
-
-    iweights = sorted(product_iweights, key=calc_dimension)
-    decomp_memo,gt_memo = {},{}
-
-    def decompose_two_irreps(R,Rp):
-
-        if R in gt_memo:
-            R_basis = gt_memo[R]
-        else:
-            R_basis = find_gt_patterns(R)
-            gt_memo[R] = R_basis
-
-        N = len(R)
-        decomposition = []
-
-        # Because this loop depends on the dimension of the irrep R,
-        # it is more efficient for dim(R) <= dim(Rp).
-        for M in R_basis:
-            t_list = list(Rp)
-            for i in range(len(M)):
-                for j in range(len(M[i])):
-                    b = M[j][i] if j==(N-1)-i else M[j][i]-M[j+1][i]
-                    t_list[(N-1)-j] += b
-                    if j != N-1 and t_list[(N-1)-j-1] < t_list[(N-1)-j]:
-                        break
-                    else:
-                        continue
-                else:
-                    continue
-                break
-            else:
-
-                # The i-weights in the decomposition are normalized so that
-                # iweight[-1] = 0. However, this algorithm works even if
-                # the iweights R and Rp are not normalized in this manner.
-                decomposition.append(tuple(t-t_list[-1] for t in t_list))
-        
-        return decomposition
-
-    # decompose is a recursive function. The routine takes R x K x Rp to
-    # K x (A + B) = K x A + K x B. The recursive step is to then decompose
-    # K x A and K x B separately. Direct-sum i-weights are returned as a list.
-
-    def decompose(irreps):
-        
-        R,Rp = irreps[0],irreps[-1]
-        label = tuple(sorted((R,Rp)))
-        if label in decomp_memo:
-            decomp_from_two = decomp_memo[label]
-        else:
-            decomp_from_two = decompose_two_irreps(R,Rp)
-            decomp_memo[label] = decomp_from_two
-        irreps.remove(R), irreps.remove(Rp)
-
-        if len(irreps)==0:
-            return decomp_from_two
-        else:
-            res = []
-            for irrep in decomp_from_two:
-                new_irreps = sorted([irrep] + irreps, key=calc_dimension)
-                ref_label = tuple(sorted(new_irreps))
-
-                if ref_label in decomp_memo:
-                    decomp = decomp_memo[ref_label]
-                else:
-                    decomp = decompose(new_irreps)
-                    decomp_memo[ref_label] = decomp
-                
-                res += decomp
-
-            return res
-    
-    direct_sum = decompose(iweights)
-
-    # count is used if sum_irrep is given. Otherwise,
-    # Counter is able to find the multiplicity of each irrep
-    # appearing in the direct-sum decomposition. The i-weights
-    # are then sorted lexicographically for neatness.
-
-    if sum_iweight is not None:
-        return direct_sum.count(sum_iweight)
-    else:
-        direct_sum = Counter(direct_sum)
-        direct_sum = dict(sorted(direct_sum.items(), reverse=True))
-        return direct_sum
-
-"""
-CLEBSCH-GORDAN COEFFICIENTS
-"""
 
 def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, multiplicity: int) -> dict[int, dict[tuple, float]]:
     """Calculates the Clebsch-Gordan Coefficients for the highest-weight state
     of an irrep (sum_iweight) appearing in the direct-sum decomposition of a
     direct product of irreps (product_iweights). A multiplicity number
-    of orthonormal CGC vectors are produced. Returns a dictionary whose
-    keys are the multiplicity indices of sum_iweight, and whose values
-    are dictionaries of the form {product basis state: CGC}.
+    of orthonormal CGC vectors are produced. The CGCs transform under
+    irreps of the symmetric group, as given by find_symmetry_direct_sum.
+    Returns a dictionary whose keys are the multiplicity indices of
+    sum_iweight, and whose values are dictionaries of the form
+    {product basis state: CGC}.
     ~Eqs. (33)-(34) and Pg. 13
     """
 
     # Return CGCs if already computed.
 
-    highest_weight_cgc_data_path = PurePath(data_directory, str(product_iweights), 'highest_weight_CGC_' + str(sum_iweight))
+    highest_weight_cgc_data_path = PurePath(_create_cgc_data_directory(), str(product_iweights), 'highest_weight_CGC_' + str(sum_iweight))
     if Path(highest_weight_cgc_data_path).exists():
         with open(highest_weight_cgc_data_path, 'rb') as fp:
             return load(fp)
@@ -368,6 +51,14 @@ def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, 
     highest_weight_state = [[sum_iweight[i] for i in range(j)] for j in range(N,0,-1)]
     highest_weight = calc_weight(highest_weight_state, 'z')
     gt_patterns = {R: find_gt_patterns(R) for R in set(product_iweights)}
+
+    # Sn_irreps gives the symmetric group irreps the CGCs of sum_iweight
+    # should transform under. idx_list are the indices each irrep acts on.
+    # tableaux_cache stores necessary standard Young tableaux.
+
+    Sn_irreps, idx_list = find_symmetry_direct_sum(product_iweights, sum_iweight)
+    Sn_irrep_set = set(partition for partitions in Sn_irreps for partition in partitions)
+    tableaux_cache = {partition: find_tableaux(list(partition)) for partition in Sn_irrep_set}
 
     # The product basis is an exponentially large set. However, in order
     # for a basis state to have a nonzero CGC with the highest-weight state,
@@ -412,18 +103,28 @@ def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, 
     # are grouped into candidates, whose J(1)z eigenvalue decomposition matches
     # that of the partition p. The candidates are looped over, checking if their
     # total J(k>1)z eigenvalues match those of the highest-weight state.
+    # In addition, selected basis states are grouped by permutations per
+    # indices in idx_list. Each group is recorded in perm_dict, whose key
+    # is the lexicographic version of each state, and whose value is a
+    # dictionary of the form {selected basis state index: selected basis state}.
 
     selected_basis = []
+    perm_dict,state_idx = defaultdict(dict),0
     for p in partition_zval(highest_weight[0]):
         candidates = [product_zweights[product_iweights[i]][0][p[i]] for i in range(len(product_iweights))]
         for state in product(*candidates):
             for k in range(1,N-1):
+                # == should be fine for half-integers.
                 if sum(calc_weight(gt_patterns[product_iweights[i]][state[i]], 'z')[k] for i in range(len(product_iweights))) == highest_weight[k]:
                     continue
                 else:
                     break
             else:
                 selected_basis.append(state)
+                # This relies on product_iweights being a sorted list of i-weights.
+                sorted_state = tuple(x for idxs in idx_list for x in sorted(state[i] for i in idxs))
+                perm_dict[sorted_state][state_idx] = state
+                state_idx += 1
 
     # The highest-weight (hw) state can be expanded in the selected basis (sb);
     # the coefficients of the expansion are the CGCs: |hw state> = sum_{sb} C_sb |sb state>.
@@ -458,7 +159,7 @@ def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, 
 
     # Let system=S be the sparse matrix. Then it is true that S^T@S @ [CGC vector] = [zero vector].
     # Therefore, the CGCs are eigenvectors of S^T@S with eigenvalue zero.
-    # The eigsh algorithm can be finicky; v0 and ncv are chosen here by trial-and-error.
+    # The eigsh algorithm can be finicky; v0 and ncv were chosen here by trial-and-error.
 
     if len(val) == 0:
         vecs = np.array([[1.0]])
@@ -471,22 +172,238 @@ def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, 
         # This is a check that the eigenvectors found have eigenvalue zero.
         if not all(abs(v)<EPS for v in vals): raise ArithmeticError('Some CGC vectors have nonzero eigenvalues:', [v for v in vals if abs(v)>=EPS])
 
-    # The phase convention is such that the CGC of the highest-weight
-    # product basis state is positive.
+    # Generally, the highest-weight state may transform under some nontrivial
+    # irrep of the symmetric group. In these cases, the highest-weight CGCs
+    # (the columns of vecs above) must be symmetrized. This can be done with
+    # Young symmetrizers. For a given set of standard Young tableaux, the Young
+    # symmetrizer Y will be a linear combination of permutations on the selected
+    # basis states (Y = sum_m a_m*p_m). The corresponding matrix is a projector
+    # with matrix elements <i|Y|j>, where |i> is a selected basis state. This is
+    # also sum_m a_m*<i|p_m|j>. Therefore, the only permutations that matter are
+    # those that take |j> to |i>. Using the fact that the projector is symmetric,
+    # ij_perms is a dictionary made to identify these permutations.
 
-    for a in range(multiplicity):
-        max_state_idx = selected_basis.index(min(selected_basis[i] for i in range(len(selected_basis)) if abs(vecs[:,a][i]) > EPS))
-        if vecs[:,a][max_state_idx] < 0:
-            vecs[:,a] *= -1
-        else:
-            continue
+    ij_perms = defaultdict(list)
+    for i in range(len(selected_basis)):
+        istate = selected_basis[i]
+        ikey = tuple(x for idxs in idx_list for x in sorted(istate[i] for i in idxs))
+        
+        # ival_idxs and jval_idxs give the states of indices of |i> and |j>
+        # per set of indices in idx_list. For example, in the case of RxRxSxS
+        # and |i>=(0,0,1,2), ival_idxs could be {0: {0: [0,1]}, 1: {1: [0], 2: [1]}}.
+        # The first set of keys refer to indices of idx_list (0 refers to [0,1] indices
+        # and 1 refers to [2,3] indices). This splits |i> into 'substates' -- namely,
+        # (0,0) and (1,2). The second set of keys are states of irreps. The final
+        # lists give indices of the 'substate' that have the state value.
+
+        ival_idxs = {}
+        for x in range(len(idx_list)):
+            substate = [istate[y] for y in idx_list[x]]
+            ival_idxs[x] = {n: list(locate(substate, lambda z: z==n)) for n in set(substate)}
+
+        # Only the upper triangular pairs of indices are necessary. Furthermore,
+        # nonzero matrix elements for (i,j) will come from states |j> that are
+        # related to |i> by permutation. Hence, the calls to perm_dict.
+
+        for j in perm_dict[ikey]:
+            if j < i:
+                continue
+            else:
+                jstate = perm_dict[ikey][j]
+
+                jval_idxs = {}
+                for x in range(len(idx_list)):
+                    substate = [jstate[y] for y in idx_list[x]]
+                    jval_idxs[x] = {n: list(locate(substate, lambda z: z==n)) for n in set(substate)}
+
+                # initial_perm is one of the most basic permutations that take
+                # |j> to |i>. All other relevant permutations can be built out of
+                # appropriate permutations of initial_perm.
+
+                initial_perm = {}
+                for x in range(len(idx_list)):
+                    for n in ival_idxs[x]:
+                        iidxs,jidxs = ival_idxs[x][n],jval_idxs[x][n]
+                        for y in range(len(iidxs)):
+                            if jidxs[y] != iidxs[y]:
+                                initial_perm[idx_list[x][iidxs[y]]] = idx_list[x][jidxs[y]]
+                            else:
+                                continue
+                initial_perm = tuple(initial_perm[k] if k in initial_perm else k for k in range(len(product_iweights)))
+                
+                # Remaining permutations can be made by permuting the indices found
+                # in ival_idxs in initial_perm.
+
+                for perms in product(*(permutations([idx_list[x][y] for y in ival_idxs[x][n]]) for x in range(len(idx_list)) for n in ival_idxs[x])):
+                    temp,pidx = [0 for k in range(len(product_iweights))],0
+                    for x in range(len(idx_list)):
+                        for n in ival_idxs[x]:
+                            for k in range(len(ival_idxs[x][n])):
+                                idx = ival_idxs[x][n][k]
+                                temp[idx_list[x][idx]] = initial_perm[perms[pidx][k]]
+                            pidx += 1
+                    ij_perms[(i,j)].append(tuple(temp))
+                
+    # Irreps of the symmetric group of degree n are given by partitions of n.
+    # The dimension of the Sn irrep is the number of standard Young tableaux
+    # that are possible to make with that partition. Different Young symmetrizers
+    # can be constructed with different Young tableaux. These combinations
+    # are accounted for by the first two for-loops. The next for-loop
+    # builds the upper-triangular of the projector matrix. These matrices
+    # are stored in highest_weight_state_symmetrizers.
+
+    highest_weight_state_symmetrizers = defaultdict(list)
+    for partitions in Sn_irreps:
+        for tableaux in product(*(tableaux_cache[irrep] for irrep in partitions)):
+
+            # The fact that the matrix is a projector comes from young_symmetrizer
+            # being a properly normalized Young symmetrizer.
+            Y = {perm: coeff for coeff,perm in young_symmetrizer(tableaux, idx_list)}
+            
+            row,col,val = [],[],[]
+            for i in range(len(selected_basis)):
+                ikey = tuple(x for idxs in idx_list for x in sorted(selected_basis[i][k] for k in idxs))
+                for j in perm_dict[ikey]:
+                    if j < i:
+                        continue
+                    else:
+                        num = sum(Y[p] for p in ij_perms[(i,j)] if p in Y)
+                        if abs(num) > EPS:
+                            row.append(i), col.append(j)
+                            # The other half of the diagonal is added at the end.
+                            if i==j:
+                                val.append(num/2)
+                            else:
+                                val.append(num)
+                        else:
+                            continue
+            symmetrizer = csr_array((val, (row,col)), shape=((len(selected_basis), len(selected_basis))), dtype=float)
+            
+            # Add the lower-triangular and store the matrix.
+            symmetrizer += symmetrizer.T
+            highest_weight_state_symmetrizers[partitions].append(symmetrizer)
+
+    # RREF returns the reduced row echelon form of a matrix. This is only used for
+    # outer multiplicities greater than one, within the same symmetric group irrep.
+    def RREF(A):
+        # i gives index of current row to be put into normal form.
+        n_rows, n_cols = A.shape
+        i = 0
+        # Iterate over columns of A to find pivots (row index with leading term).
+        # Pivots are chosen based on maximum value found in column.
+        for j in range(n_cols):
+            pivot = np.argmax(abs(A[i:n_rows,j])) + i
+            max_at_pivot = abs(A[pivot,j])
+            # If max_at_pivot~0 then column must be zero vector.
+            if max_at_pivot < EPS:
+                A[i:n_rows,j] = np.zeros(n_rows-i)
+            else:
+                # If pivot is not current row then swap pivot and i
+                # so that pivot row is ith row.
+                if pivot != i:
+                    A[[pivot,i], j:n_cols] = A[[i,pivot], j:n_cols]
+                else:
+                    pass
+                # Make sure ith row has a leading 1.
+                A[i, j:n_cols] = A[i, j:n_cols]/A[i,j]
+                # Subtract multiples of ith reduced row from other rows
+                # to make all entries above/below leading 1 zero.
+                reduced_row = A[i, j:n_cols]
+                if i > 0:
+                    row_inds_above = range(i)
+                    A[row_inds_above, j:n_cols] = A[row_inds_above, j:n_cols] - np.outer(reduced_row, A[row_inds_above, j]).T
+                if i < n_rows-1:
+                    row_inds_below = range(i+1,n_rows)
+                    A[row_inds_below, j:n_cols] = A[row_inds_below, j:n_cols] - np.outer(reduced_row, A[row_inds_below, j]).T
+                else:
+                    pass
+                # Subsequent iterations will now
+                # find pivots in sub-matrix A[i:n_rows, j:n_cols].
+                i += 1
+            # Conditional for non-square matrices.
+            if i == n_rows:
+                break
+            else:
+                continue
+        return A
+
+    # Let P be a projection matrix. P can be written in the basis of vecs as Ptilde.
+    # Ptilde is still a projector with eigenvalues (tvals) zero and one. The
+    # eigenvectors (tvecs) with eigenvalue one give the coefficients of the linear
+    # combinations of vecs that are properly symmetrized according to P. The rest of
+    # the eigenvectors give the coefficients of the linear combinations of vecs
+    # that are orthogonal to the symmetrized vectors. These remaining orthogonal,
+    # unsymmetrized vectors can be fed to another projection matrix, and the
+    # algorithm proceeds as before.
+
+    # num_remaining tracks how many CGC vectors still need to be symmetrized.
+    # remaining_vecs are the remaining CGC vectors (as rows of an array).
+    # sym_vecs will be a list of individual symmetrized CGC vectors.
+
+    num_remaining = multiplicity
+    remaining_vecs = vecs.T
+    sym_vecs = []
+    for partitions in Sn_irreps:
+        mult = Sn_irreps[partitions]
+        for symmetrizer in highest_weight_state_symmetrizers[partitions]:
+
+            # Build Ptilde out of the Young symmetrizer and the remaining
+            # vectors. The eigenvalues tvals will be ones and zeros.
+
+            Ptilde = []
+            for i in range(num_remaining):
+                row = []
+                for j in range(num_remaining):
+                    row.append(remaining_vecs[i]@symmetrizer@remaining_vecs[j])
+                Ptilde.append(row)
+            tvals,tvecs = np.linalg.eigh(Ptilde)
+
+            # ones contains the indices of tvals where eigenvalues equal one.
+            # coeffs are the corresponding eigenvectors. symmetrized is an array
+            # whose rows are properly symmetrized CGCs. If the multiplicity (mult)
+            # of the symmetric group irrep is greater than one then the CGCs are
+            # further refined by passing them through RREF and Gram-Schmidt.
+            # Otherwise, ensure that the CGCs are normalized.
+
+            ones = np.where(np.isclose(tvals, 1.0))[0]
+            coeffs = tvecs[:,ones].T
+            symmetrized = coeffs@remaining_vecs
+            if mult > 1:
+                symmetrized = RREF(symmetrized)
+                symmetrized = np.linalg.qr(symmetrized.T)[0].T
+            else:
+                symmetrized /= np.linalg.norm(symmetrized)
+
+            # The phase convention is such that the CGC of the highest-weight
+            # product basis state is positive.
+
+            for k in range(mult):
+                max_state_idx = selected_basis.index(min(selected_basis[n] for n in range(len(selected_basis)) if abs(symmetrized[k][n]) > EPS))
+                if symmetrized[k][max_state_idx] < 0:
+                    symmetrized[k] *= -1
+                else:
+                    pass
+                sym_vecs.append(symmetrized[k])
+
+            # zeros contains the indices of tvals where eigenvalues equal zero.
+            # coeffs are the corresponding eigenvectors. remaining_vecs are turned
+            # into vectors that are orthogonal to the current symmetrized CGCs.
+
+            if num_remaining-mult == 0:
+                continue
+            else:
+                zeros = [k for k in range(len(tvals)) if k not in ones]
+                coeffs = tvecs[:,zeros].T
+                remaining_vecs = coeffs@remaining_vecs
+                num_remaining -= mult
+    vecs = np.array(sym_vecs)
 
     # Gather all nonzero CGCs for each multiplicity index.
     # A CGC counts as zero if abs(CGC) < EPS.
-    
+
     cgc_dict = {}
     for a in range(multiplicity):
-        cgc_dict[a+1] = {selected_basis[i]: vecs[:,a][i] for i in range(len(selected_basis)) if abs(vecs[:,a][i]) > EPS}
+        cgc_dict[a+1] = {selected_basis[i]: vecs[a][i] for i in range(len(selected_basis)) if abs(vecs[a][i]) > EPS}
 
     # Save CGCs.
 
@@ -510,7 +427,7 @@ def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight_mult_idx: 
 
     # Return CGCs if already computed.
 
-    lower_weight_cgc_data_path = PurePath(data_directory, str(product_iweights), f'lower_weight_CGC_{sum_iweight_mult_idx}')
+    lower_weight_cgc_data_path = PurePath(_create_cgc_data_directory(), str(product_iweights), f'lower_weight_CGC_{sum_iweight_mult_idx}')
     if Path(lower_weight_cgc_data_path).exists():
         with open(lower_weight_cgc_data_path, 'rb') as fp:
             return load(fp)
@@ -543,7 +460,7 @@ def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight_mult_idx: 
                 child = gt_patterns[sum_iweight].index(child_in_list[0])
                 child_weight = pweights[child]
                 parent_dict[child_weight][parent][k].append((coeff, child))
-    
+
     cgc_dict = {}
 
     # There are potentially multiple sum_iweight states that have the same
@@ -560,9 +477,7 @@ def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight_mult_idx: 
         # For the highest-weight state, simply use highest_dict.
         if pweight==sum_iweight:
             cgc_dict[0] = highest_dict
-
         else:
-
             # The relevant sum (lhs) and product (rhs) basis states
             # will be gathered iteratively in lhs_basis and rhs_basis.
             LHS,RHS = [],[]
@@ -633,6 +548,7 @@ def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight_mult_idx: 
 
     return cgc_dict
 
+
 def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: int=None, sum_state: int=None, product_state: tuple=None) -> dict:
     """Manages the calculation of desired Clebsch-Gordan Coefficients in the
     direct-sum decomposition of a direct product of irreps (product_iweights).
@@ -646,13 +562,12 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     product_iweights are sorted; computed CGCs are then returned with
     product basis states unsorted according to the input product_iweights.
     """
-
     # Get direct-sum decomposition and sort product_iweights.
     decomposition = find_direct_sum(product_iweights)
     product_irreps = sorted(product_iweights)
 
     # Ensure directory for product_iweights exists to save CGCs.
-    cgc_data_directory = PurePath(data_directory, str(product_irreps))
+    cgc_data_directory = PurePath(_create_cgc_data_directory(), str(product_irreps))
     Path(cgc_data_directory).mkdir(exist_ok=True)
     
     # reorder is created to unsort the product basis states in computed CGCs.
@@ -684,7 +599,7 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
                 return lower_dict[product_state]
             else:
                 return 0
-    
+
     # Returns CGCs of a sum basis state.
     elif None not in {sum_iweight,mult_idx,sum_state}:
         multiplicity = decomposition[sum_iweight]
@@ -696,7 +611,7 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
             lower_dict = calc_lower_weight_cgcs(product_irreps, (sum_iweight,mult_idx), highest_dict[mult_idx])
             lower_dict = {reorder(P): lower_dict[sum_state][P] for P in lower_dict[sum_state]}
             return lower_dict
-    
+
     # Returns CGCs of a direct-sum irrep.
     elif None not in {sum_iweight,mult_idx}:
         multiplicity = decomposition[sum_iweight]
@@ -704,7 +619,7 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
         lower_dict = calc_lower_weight_cgcs(product_irreps, (sum_iweight,mult_idx), highest_dict[mult_idx])
         lower_dict = {S: {reorder(P): lower_dict[S][P] for P in lower_dict[S]} for S in lower_dict}
         return lower_dict
-    
+
     # Returns CGCs of a direct-sum i-weight.
     elif sum_iweight is not None:
         cgc_dict = {}
@@ -728,6 +643,7 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
                 cgc_dict[sum_irrep][a] = lower_dict
         return dict(cgc_dict)
 
+
 def print_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: int=None, sum_state: int=None, product_state: tuple=None) -> None:
     """Prints all desired Clebsch-Gordan Coefficients in the
     direct-sum decomposition of a direct product of irreps (product_iweights).
@@ -737,7 +653,6 @@ def print_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx:
     sum_state is an integer indexing the basis state of sum_iweight.
     product_state is a product basis state of product_iweights.
     """
-
     cgc_res = calc_cgcs(product_iweights, sum_iweight, mult_idx, sum_state, product_state)
     gt_patterns = {R: dict(enumerate(find_gt_patterns(R))) for R in set(product_iweights)}
 
@@ -751,7 +666,6 @@ def print_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx:
         print('='*50)
         print(cgc_res, product_state)
         print()
-
     elif None not in {sum_iweight,mult_idx,sum_state}:
         sum_gts = find_gt_patterns(sum_iweight)
         print('#'*50)
@@ -764,7 +678,6 @@ def print_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx:
             cgc = cgc_res[product_state]
             print(cgc, product_state)
         print()
-
     elif None not in {sum_iweight,mult_idx}:
         sum_gts = find_gt_patterns(sum_iweight)
         print('#'*50)
@@ -778,7 +691,6 @@ def print_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx:
                 cgc = cgc_res[sum_state][product_state]
                 print(cgc, product_state)
             print()
-
     elif sum_iweight is not None:
         sum_gts = find_gt_patterns(sum_iweight)
         for mult_idx in cgc_res:
@@ -793,7 +705,6 @@ def print_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx:
                     cgc = cgc_res[mult_idx][sum_state][product_state]
                     print(cgc, product_state)
                 print()
-
     else:
         for sum_irrep in cgc_res:
             sum_gts = find_gt_patterns(sum_irrep)
@@ -809,18 +720,18 @@ def print_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx:
                         cgc = cgc_res[sum_irrep][mult_idx][sum_state][product_state]
                         print(cgc, product_state)
                     print()
-    
+
     print('states of', product_iweights)
     for R in gt_patterns:
         print(R)
         print(gt_patterns[R])
         print()
 
+
 def check_cgcs(product_iweights: list[tuple]) -> bool:
     """Checks if the Clebsch-Gordan Coefficient matrix satisfies
     the expected orthogonality conditions. Returns True if orthogonal.
     """
-
     cgc_dict = calc_cgcs(product_iweights)
     ranges = [range(calc_dimension(R)) for R in product_iweights]
     dim = 1
