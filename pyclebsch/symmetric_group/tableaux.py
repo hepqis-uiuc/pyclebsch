@@ -25,6 +25,7 @@ def _conjugate_partition(partition):
 
     return conjugate_partition
 
+
 def _product_of_hook_lengths(partition):
     """This nested for-loop finds the hook length for each cell of a tableau
     for the partition and multiplies them all.
@@ -113,6 +114,7 @@ def _tableau_data(tableau, extra_data=False):
     else:
         return n, row_permutations, col_permutations, is_row_ordered, is_col_ordered
 
+
 def partition_to_sequence(p):
     s,num_rows = [],len(p)
     for i in range(num_rows):
@@ -122,6 +124,7 @@ def partition_to_sequence(p):
             s += [1]*(p[num_rows-i-1]- p[num_rows-i]) + [0]
     return s
 
+
 def sequence_to_partition(s):
     p,num_ones = [],0
     for i in s:
@@ -130,7 +133,8 @@ def sequence_to_partition(s):
         else:
             num_ones += 1
     return [x for x in p if x!=0]
-    
+
+
 def _rim_hooks(partition, l):
     """Finds the rim hooks of a given length l
     for a given partition.
@@ -177,6 +181,7 @@ def find_partitions(n: int) -> Generator[list]:
         a[k] = x + y
         y = x + y - 1
         yield a[:k + 1][::-1]
+
 
 def find_tableaux(partition: list) -> list[YoungTableau]:
     """Generates standard Young tableaux given a partition.
@@ -274,7 +279,7 @@ def find_tableaux(partition: list) -> list[YoungTableau]:
             return flattened_tableaux
 
     flat_tabs = generate()
-    
+
     # Unflatten generated flattened tableaux.
 
     standard_tableaux = []

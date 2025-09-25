@@ -1,14 +1,15 @@
 import numpy as np
-from math import factorial
 from scipy.sparse import csr_array
 from scipy.sparse.linalg import eigsh
-from itertools import product, combinations, permutations
+from itertools import product, permutations
 from collections import Counter, defaultdict
-from collections.abc import Generator
-from functools import reduce
 from more_itertools import locate, product_index
 from pathlib import Path, PurePath
 from pickle import load, dump
+
+from pyclebsch.su_n_operators import calc_dimension, calc_weight, find_gt_patterns, find_direct_sum, find_symmetry_direct_sum, ladder_op
+from pyclebsch.symmetric_group.tableaux import find_tableaux
+from pyclebsch.symmetric_group.young_symmetrizer import young_symmetrizer
 
 EPS = 1e-10
 
@@ -16,6 +17,7 @@ EPS = 1e-10
 script_directory = Path(__file__).resolve().parent
 data_directory = PurePath(script_directory, 'CGC_Data')
 Path(data_directory).mkdir(exist_ok=True)
+
 
 def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, multiplicity: int) -> dict[int, dict[tuple, float]]:
     """Calculates the Clebsch-Gordan Coefficients for the highest-weight state
@@ -277,7 +279,7 @@ def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, 
             # Add the lower-triangular and store the matrix.
             symmetrizer += symmetrizer.T
             highest_weight_state_symmetrizers[partitions].append(symmetrizer)
-    
+
     # RREF returns the reduced row echelon form of a matrix. This is only used for
     # outer multiplicities greater than one, within the same symmetric group irrep.
     def RREF(A):
@@ -395,7 +397,7 @@ def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, 
 
     # Gather all nonzero CGCs for each multiplicity index.
     # A CGC counts as zero if abs(CGC) < EPS.
-    
+
     cgc_dict = {}
     for a in range(multiplicity):
         cgc_dict[a+1] = {selected_basis[i]: vecs[a][i] for i in range(len(selected_basis)) if abs(vecs[a][i]) > EPS}
@@ -455,7 +457,7 @@ def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight_mult_idx: 
                 child = gt_patterns[sum_iweight].index(child_in_list[0])
                 child_weight = pweights[child]
                 parent_dict[child_weight][parent][k].append((coeff, child))
-    
+
     cgc_dict = {}
 
     # There are potentially multiple sum_iweight states that have the same
@@ -472,9 +474,7 @@ def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight_mult_idx: 
         # For the highest-weight state, simply use highest_dict.
         if pweight==sum_iweight:
             cgc_dict[0] = highest_dict
-
         else:
-
             # The relevant sum (lhs) and product (rhs) basis states
             # will be gathered iteratively in lhs_basis and rhs_basis.
             LHS,RHS = [],[]
@@ -545,6 +545,7 @@ def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight_mult_idx: 
 
     return cgc_dict
 
+
 def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: int=None, sum_state: int=None, product_state: tuple=None) -> dict:
     """Manages the calculation of desired Clebsch-Gordan Coefficients in the
     direct-sum decomposition of a direct product of irreps (product_iweights).
@@ -558,7 +559,6 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     product_iweights are sorted; computed CGCs are then returned with
     product basis states unsorted according to the input product_iweights.
     """
-
     # Get direct-sum decomposition and sort product_iweights.
     decomposition = find_direct_sum(product_iweights)
     product_irreps = sorted(product_iweights)
@@ -596,7 +596,7 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
                 return lower_dict[product_state]
             else:
                 return 0
-    
+
     # Returns CGCs of a sum basis state.
     elif None not in {sum_iweight,mult_idx,sum_state}:
         multiplicity = decomposition[sum_iweight]
@@ -608,7 +608,7 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
             lower_dict = calc_lower_weight_cgcs(product_irreps, (sum_iweight,mult_idx), highest_dict[mult_idx])
             lower_dict = {reorder(P): lower_dict[sum_state][P] for P in lower_dict[sum_state]}
             return lower_dict
-    
+
     # Returns CGCs of a direct-sum irrep.
     elif None not in {sum_iweight,mult_idx}:
         multiplicity = decomposition[sum_iweight]
@@ -616,7 +616,7 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
         lower_dict = calc_lower_weight_cgcs(product_irreps, (sum_iweight,mult_idx), highest_dict[mult_idx])
         lower_dict = {S: {reorder(P): lower_dict[S][P] for P in lower_dict[S]} for S in lower_dict}
         return lower_dict
-    
+
     # Returns CGCs of a direct-sum i-weight.
     elif sum_iweight is not None:
         cgc_dict = {}
@@ -640,6 +640,7 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
                 cgc_dict[sum_irrep][a] = lower_dict
         return dict(cgc_dict)
 
+
 def print_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: int=None, sum_state: int=None, product_state: tuple=None) -> None:
     """Prints all desired Clebsch-Gordan Coefficients in the
     direct-sum decomposition of a direct product of irreps (product_iweights).
@@ -649,7 +650,6 @@ def print_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx:
     sum_state is an integer indexing the basis state of sum_iweight.
     product_state is a product basis state of product_iweights.
     """
-
     cgc_res = calc_cgcs(product_iweights, sum_iweight, mult_idx, sum_state, product_state)
     gt_patterns = {R: dict(enumerate(find_gt_patterns(R))) for R in set(product_iweights)}
 
@@ -663,7 +663,6 @@ def print_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx:
         print('='*50)
         print(cgc_res, product_state)
         print()
-
     elif None not in {sum_iweight,mult_idx,sum_state}:
         sum_gts = find_gt_patterns(sum_iweight)
         print('#'*50)
@@ -676,7 +675,6 @@ def print_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx:
             cgc = cgc_res[product_state]
             print(cgc, product_state)
         print()
-
     elif None not in {sum_iweight,mult_idx}:
         sum_gts = find_gt_patterns(sum_iweight)
         print('#'*50)
@@ -690,7 +688,6 @@ def print_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx:
                 cgc = cgc_res[sum_state][product_state]
                 print(cgc, product_state)
             print()
-
     elif sum_iweight is not None:
         sum_gts = find_gt_patterns(sum_iweight)
         for mult_idx in cgc_res:
@@ -705,7 +702,6 @@ def print_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx:
                     cgc = cgc_res[mult_idx][sum_state][product_state]
                     print(cgc, product_state)
                 print()
-
     else:
         for sum_irrep in cgc_res:
             sum_gts = find_gt_patterns(sum_irrep)
@@ -721,18 +717,18 @@ def print_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx:
                         cgc = cgc_res[sum_irrep][mult_idx][sum_state][product_state]
                         print(cgc, product_state)
                     print()
-    
+
     print('states of', product_iweights)
     for R in gt_patterns:
         print(R)
         print(gt_patterns[R])
         print()
 
+
 def check_cgcs(product_iweights: list[tuple]) -> bool:
     """Checks if the Clebsch-Gordan Coefficient matrix satisfies
     the expected orthogonality conditions. Returns True if orthogonal.
     """
-
     cgc_dict = calc_cgcs(product_iweights)
     ranges = [range(calc_dimension(R)) for R in product_iweights]
     dim = 1

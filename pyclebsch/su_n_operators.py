@@ -1,9 +1,13 @@
+from math import factorial
 import numpy as np
 from scipy.sparse import csr_array
 from itertools import product, combinations
 from collections import Counter, defaultdict
 from functools import reduce
 from more_itertools import locate
+
+from pyclebsch.symmetric_group.plethysm_utils import _Adams, _class_character, _class_order
+from pyclebsch.symmetric_group.tableaux import find_partitions
 
 
 def calc_dimension(iweight: tuple) -> int:
@@ -17,6 +21,7 @@ def calc_dimension(iweight: tuple) -> int:
             dim *= 1 + (iweight[jp] - iweight[j])/(j - jp)
 
     return round(dim)
+
 
 def calc_weight(gt_pattern: list[list], kind: str) -> list:
     """Returns the weight of a basis state of an irrep.
@@ -39,7 +44,6 @@ def calc_weight(gt_pattern: list[list], kind: str) -> list:
             else:
                 weight.append(sum(gt_pattern[k]) - (sum(gt_pattern[k-1]) + sum(gt_pattern[k+1]))/2)
         return weight
-    
     elif kind == 'p':
         for l in range(N-1, -1, -1):
             if l==N-1:
@@ -47,7 +51,6 @@ def calc_weight(gt_pattern: list[list], kind: str) -> list:
             else:
                 weight.append(sum(gt_pattern[l]) - sum(gt_pattern[l+1]))
         return weight
-    
     else:
         raise ValueError('Invalid weight kind.')
 
@@ -69,16 +72,17 @@ def find_gt_patterns(iweight: tuple) -> list[list[list]]:
         else:
             for next_row in product(*[range(row[j], row[j+1]-1, -1) for j in range(len(row)-1)]):
                 find_next_rows(list(next_row), prev_rows + [row])
-    
+
     find_next_rows(list(iweight))
 
     # GT-patterns are sorted based on their p-weight (lexicographically)
     # such that the highest-weight state is the first in the list.
     # For states with equal p-weight, their GT-patterns are sorted lexicographically.
-    
+
     gt_patterns.sort(key=lambda pat: calc_weight(pat, 'p'), reverse=True)
 
     return gt_patterns
+
 
 def ladder_op(gt_patterns: list[list[list]], k: int, kind: str) -> list:
     """Applies J(k)+- to a direct-product basis state.
@@ -127,13 +131,14 @@ def ladder_op(gt_patterns: list[list[list]], k: int, kind: str) -> list:
                 else:
                     new_rows.append([row[jp]-1 if jp==j else row[jp] for jp in range(len(row))])
                     coeffs.append(np.sqrt(-coeff))
-        
+
         for row,coeff in zip(new_rows,coeffs):
             new_pat = pattern[0:k] + [row] + pattern[k+1:]
             patterns = gt_patterns[0:i] + [new_pat] + gt_patterns[i+1:]
             linear_combination.append([coeff,patterns])
 
     return linear_combination
+
 
 def find_suN_basis(iweight: tuple) -> list[csr_array]:
     """Returns a basis for an irrep of su(N).
@@ -196,7 +201,7 @@ def find_suN_basis(iweight: tuple) -> list[csr_array]:
             M = Jz - sum(in_prod(Jz,V)/in_prod(V,V)*V for V in basis)
             M *= np.sqrt(in_prod(Jz,Jz)/in_prod(M,M))
             basis.append(M)
-    
+
     # Each J(k)+ matrix gives two basis matrices, coming from
     # [J(k)+ + J(k)-]/2 and -i[J(k)+ - J(k)-]/2. Note that
     # J(k)- = [J(k)+]^T because the output of ladder_op is real.
@@ -220,6 +225,7 @@ def find_suN_basis(iweight: tuple) -> list[csr_array]:
 
     return basis
 
+
 def find_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> dict[tuple, int]:
     """Decomposes a direct product of irreps (product_iweights) into a
     direct sum of irreps. Returns a dictionary whose keys are the irreps
@@ -235,7 +241,7 @@ def find_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> d
     # encountered in the algorithm to avoid duplicate calculations.
 
     iweights = sorted(product_iweights, key=calc_dimension)
-    decomp_memo,gt_memo = {},{}
+    decomp_memo, gt_memo = {},{}
 
     def decompose_two_irreps(R,Rp):
 
@@ -269,7 +275,7 @@ def find_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> d
                 # iweight[-1] = 0. However, this algorithm works even if
                 # the iweights R and Rp are not normalized in this manner.
                 decomposition.append(tuple(t-t_list[-1] for t in t_list))
-        
+
         return decomposition
 
     # decompose is a recursive function. The routine takes R x K x Rp to
@@ -277,7 +283,7 @@ def find_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> d
     # K x A and K x B separately. Direct-sum i-weights are returned as a list.
 
     def decompose(irreps):
-        
+
         R,Rp = irreps[0],irreps[-1]
         label = tuple(sorted((R,Rp)))
         if label in decomp_memo:
@@ -300,11 +306,11 @@ def find_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> d
                 else:
                     decomp = decompose(new_irreps)
                     decomp_memo[ref_label] = decomp
-                
+
                 res += decomp
 
             return res
-    
+
     direct_sum = decompose(iweights)
 
     # count is used if sum_irrep is given. Otherwise,
@@ -392,3 +398,123 @@ def find_symmetry_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=N
     # Sort the direct-sum irreps lexicographically.    
     direct_sum = {R: dict(direct_sum[R]) for R in sorted(direct_sum.keys(), reverse=True)}
     return direct_sum, indices
+
+
+def find_plethysms(iweight: tuple, n: int) -> dict[tuple, dict[tuple, int]]:
+    """Decomposes a direct product of n factors of an irrep (iweight)
+    into a direct sum of irreps. The decomposition is returned as a dictionary
+    whose keys are the direct-sum irreps, and whose values are dictionaries
+    giving the symmetric group irrep (given as a partition of n) those
+    irreps transform under, with multiplicity.
+    """
+
+    # This code is largely adapted from the PermutationGroup.m file
+    # of GroupMath, https://renatofonseca.net/groupmath
+
+    # Gather initial data.
+    N = len(iweight)
+    fundamental_rep = tuple(1 if i==0 else 0 for i in range(N))
+
+    # The dominant weights are z-weights whose entries are all nonnegative.
+    # dominant_zweights records these weights as well as their multiplicities.
+    dominant_zweights = defaultdict(int)
+    for pat in find_gt_patterns(iweight):
+        zweight = calc_weight(pat, 'z')
+        if all(x>=0 for x in zweight):
+            dominant_zweights[tuple(zweight)] += 1
+        else:
+            continue
+
+    # Simple roots can be extracted from the z-weights of the
+    # fundamental representation.
+    simple_roots, fund_basis = [], find_gt_patterns(fundamental_rep)
+    for i in range(N-1):
+        wi = np.array(calc_weight(fund_basis[i], 'z'))
+        wi_1 = np.array(calc_weight(fund_basis[i+1], 'z'))
+        simple_roots.append(2*(wi - wi_1))
+
+    # A plethysm has a polynomial where each term is an SU(N) irrep with
+    # a multiplicity coefficient. The formula for the polynomial can be found
+    # in page 72 of http://wwwmathlabo.univ-poitiers.fr/~maavl/pdf/LiE-manual.pdf
+    # The algorithm is iterative and many computations are repeated; to
+    # mitigate this, Adams_dict stores all possible evaluations of Adams.
+    # decomp_dict stores all direct-sum decompositions. part_dict effectively
+    # evaluates the formula once, storing each term from it, up to a coefficient.
+
+    Adams_dict = {k: _Adams(k, N, dominant_zweights, simple_roots) for k in range(1,n+1)}
+    part_dict, decomp_dict = {}, {}
+
+    # The formula may produce a direct product of (direct-sum) polynomials
+    # of the form (R1 + R2 + R3 + ...) x (S1 + S2 + S3 + ...) x ...
+    # with integer coefficients on each irrep. The direct products are
+    # decomposed with find_direct_sum and all direct-sum irreps are combined
+    # at the end. Irreps with coefficient zero are discarded.
+
+    for P in find_partitions(n):
+
+        # poly_dict represents the final polynomial as a dictionary
+        # whose keys are irreps and whose values are their coefficients.
+        # polynomial_factors is a list of the (direct-sum) polynomials,
+        # which are also lists of [irrep, prefactor].
+        polynomial_factors = [Adams_dict[k] for k in P]
+
+        if len(P) == 1:
+            part_dict[tuple(P)] = polynomial_factors[0]
+        else:
+            poly_dict = defaultdict(int)
+
+            for i in range(1,len(P)):
+                if i == 1:
+                    for R,Rp in product(polynomial_factors[0], polynomial_factors[i]):
+                        label = tuple(sorted([R,Rp]))
+                        num = polynomial_factors[0][R]*polynomial_factors[i][Rp]
+                        if label in decomp_dict:
+                            decomp = decomp_dict[label]
+                        else:
+                            decomp = find_direct_sum([R,Rp])
+                            decomp_dict[label] = decomp
+                        for S,mult in decomp.items():
+                            poly_dict[S] += num*mult
+                    poly_dict = {R:num for R,num in poly_dict.items() if num != 0}
+                else:
+                    temp = defaultdict(int)
+                    for R,Rp in product(poly_dict, polynomial_factors[i]):
+                        label = tuple(sorted([R,Rp]))
+                        num = poly_dict[R]*polynomial_factors[i][Rp]
+                        if label in decomp_dict:
+                            decomp = decomp_dict[label]
+                        else:
+                            decomp = find_direct_sum([R,Rp])
+                            decomp_dict[label] = decomp
+                        for S,mult in decomp.items():
+                            temp[S] += num*mult
+                    poly_dict = {R:num for R,num in temp.items() if num != 0}
+
+            part_dict[tuple(P)] = {R: num for R,num in poly_dict.items() if num != 0}
+
+    # plethysms holds the plethysm formula computed for each Sn irrep (partition).
+    # The formula contains a coefficient that is generally a float, unlike
+    # all previous coefficients. round is used to detect zeros and
+    # ensure all multiplicities are integer-valued.
+
+    plethysms = defaultdict(dict)
+
+    for partition in find_partitions(n):
+        plethysm = defaultdict(float)
+        for P in find_partitions(n):
+            coeff = _class_order(P,n)*_class_character(partition,P)/factorial(n)
+            if coeff == 0:
+                continue
+            else:
+                for R,num in part_dict[tuple(P)].items():
+                    plethysm[R] += coeff*num
+        for R,num in plethysm.items():
+            mult = round(num)
+            if mult == 0:
+                continue
+            else:
+                plethysms[R][tuple(partition)] = mult
+
+    # Sort SU(N) irreps lexicographically.
+    plethysms = {R: plethysms[R] for R in sorted(plethysms.keys(), reverse=True)}
+    return plethysms

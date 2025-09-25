@@ -1,5 +1,8 @@
 from collections import defaultdict
 from collections.abc import Generator
+from itertools import product
+
+from pyclebsch.symmetric_group.tableaux import YoungTableau, _tableau_data
 
 
 def _sgn(permutation):
@@ -19,6 +22,7 @@ def _sgn(permutation):
     else:
         return -1
 
+
 def _compose_two(p1, p2, n):
     """Computes the equivalent permutation got by first applying p1 and then p2.
     p1 and p2 need not be of equal lengths; n ensures that the final permutation
@@ -35,6 +39,7 @@ def _compose_two(p1, p2, n):
         return perm
     else:
         return perm + tuple(range(len(perm), n))
+
 
 def _reduce_perms(perms_lists, anti_idxs, n):
     """Simplifies a product of linear combinations of permutations into a single
@@ -80,6 +85,7 @@ def _reduce_perms(perms_lists, anti_idxs, n):
             res = temp
             temp = res.copy()
     return dict(res)
+
 
 def young_symmetrizer(tableaux: list[YoungTableau], idx_list: list[list]) -> Generator[tuple[float, tuple]]:
     """Generates the Young symmetrizer corresponding to a list of standard
