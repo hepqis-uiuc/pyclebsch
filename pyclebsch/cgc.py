@@ -14,9 +14,12 @@ from pyclebsch.symmetric_group.young_symmetrizer import young_symmetrizer
 EPS = 1e-10
 
 # Creates CGC_Data directory in directory of this script.
-script_directory = Path(__file__).resolve().parent
-data_directory = PurePath(script_directory, 'CGC_Data')
-Path(data_directory).mkdir(exist_ok=True)
+def _create_cgc_data_directory():
+    script_directory = Path(__file__).resolve().parent
+    data_directory = PurePath(script_directory, 'CGC_Data')
+    Path(data_directory).mkdir(exist_ok=True)
+
+    return data_directory
 
 
 def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, multiplicity: int) -> dict[int, dict[tuple, float]]:
@@ -33,7 +36,7 @@ def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, 
 
     # Return CGCs if already computed.
 
-    highest_weight_cgc_data_path = PurePath(data_directory, str(product_iweights), 'highest_weight_CGC_' + str(sum_iweight))
+    highest_weight_cgc_data_path = PurePath(_create_cgc_data_directory(), str(product_iweights), 'highest_weight_CGC_' + str(sum_iweight))
     if Path(highest_weight_cgc_data_path).exists():
         with open(highest_weight_cgc_data_path, 'rb') as fp:
             return load(fp)
@@ -424,7 +427,7 @@ def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight_mult_idx: 
 
     # Return CGCs if already computed.
 
-    lower_weight_cgc_data_path = PurePath(data_directory, str(product_iweights), f'lower_weight_CGC_{sum_iweight_mult_idx}')
+    lower_weight_cgc_data_path = PurePath(_create_cgc_data_directory(), str(product_iweights), f'lower_weight_CGC_{sum_iweight_mult_idx}')
     if Path(lower_weight_cgc_data_path).exists():
         with open(lower_weight_cgc_data_path, 'rb') as fp:
             return load(fp)
@@ -564,7 +567,7 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     product_irreps = sorted(product_iweights)
 
     # Ensure directory for product_iweights exists to save CGCs.
-    cgc_data_directory = PurePath(data_directory, str(product_irreps))
+    cgc_data_directory = PurePath(_create_cgc_data_directory(), str(product_irreps))
     Path(cgc_data_directory).mkdir(exist_ok=True)
     
     # reorder is created to unsort the product basis states in computed CGCs.
