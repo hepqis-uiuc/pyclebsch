@@ -15,7 +15,7 @@ EPS = 1e-10
 
 # Creates CGC_Data directory in directory of this script.
 def _create_cgc_data_directory():
-    script_directory = Path(__file__).resolve().parent
+    script_directory = Path(__file__).resolve().parent.parent
     data_directory = PurePath(script_directory, 'CGC_Data')
     Path(data_directory).mkdir(exist_ok=True)
 
