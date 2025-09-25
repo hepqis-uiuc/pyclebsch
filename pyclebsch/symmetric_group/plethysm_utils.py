@@ -1,7 +1,7 @@
 import numpy as np
 from math import factorial
 from collections import Counter, defaultdict
-
+from pyclebsch.symmetric_group.tableaux import _rim_hooks
 
 def _class_order(partition, n):
     """Calculates the order of the conjugacy
