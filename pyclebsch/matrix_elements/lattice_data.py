@@ -32,7 +32,11 @@ def sites_links_and_plaquettes(num_sites, PBCs, FORDER):
     else:
         pass
 
-    if len(FORDER) > 6:
+    # The maximum number of spatial lattice dimensions. This variable is
+    # currently placed here for possible future development.
+    MAX_LATTICE_DIM = 3
+
+    if len(FORDER) != 2*MAX_LATTICE_DIM:
         raise NotImplementedError('>3d lattices are not implemented yet.')
     elif sorted(FORDER) != [-3,-2,-1,1,2,3]:
         raise ValueError('FORDER should be a permutation of [1,2,3,-1,-2,-3].')
