@@ -18,6 +18,12 @@ There is no need to manually activate or deactivate the virtual environment. Inf
 uv pip list
 ```
 
+### Installation for Windows subsystem for Linux (WSL)
+After setting up WSL there is a checklist of programs you may need before proceeding with the regular installation instructions above:
+
+1. Download / update Git by running `sudo apt-get install git`.
+2. Download / update Python3 by running `sudo apt install python3 python3-pip`
+
 ## Adding, updating, and removing dependencies
 To add a package to the project (for example, `numpy`):
 
@@ -47,12 +53,6 @@ The uv tool should automatically lock (generate a machine-readable description o
 uv lock
 uv sync
 ```
-
-### Installation for Windows subsystem for Linux (WSL)
-After setting up WSL there is a checklist of programs you may need before proceeding with the regular installation instructions above:
-
-1. Download / update Git by running `sudo apt-get install git`.
-2. Download / update Python3 by running `sudo apt install python3 python3-pip`
 
 ## Usage
 There is a small script called run.py which demonstrates standard usage of some of the functionality of this package. We plan on adding more documentation in the future.
