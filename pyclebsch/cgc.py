@@ -562,9 +562,10 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     product_iweights are sorted; computed CGCs are then returned with
     product basis states unsorted according to the input product_iweights.
     """
-    # Get direct-sum decomposition and sort product_iweights.
+    # Get direct-sum decomposition and normalize/sort product_iweights.
     decomposition = find_direct_sum(product_iweights)
-    product_irreps = sorted(product_iweights)
+    normalized_iweights = [tuple(j-iweight[-1] for j in iweight) for iweight in product_iweights]
+    product_irreps = sorted(normalized_iweights)
 
     # Ensure directory for product_iweights exists to save CGCs.
     cgc_data_directory = PurePath(_create_cgc_data_directory(), str(product_irreps))
@@ -573,11 +574,11 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     # reorder is created to unsort the product basis states in computed CGCs.
     # The ith index of mapping gives the index the ith unsorted irrep becomes
     # in the sorted product_irreps. When the same irreps appear in
-    # product_iweights, reorder simply slides these irreps together to the right.
-    mapping = [0]*len(product_iweights)
+    # normalized_iweights, reorder simply slides these irreps together to the right.
+    mapping = [0]*len(normalized_iweights)
     srt_idx = 0
-    for irrep in sorted(set(product_iweights)):
-        for unsrt_idx in locate(product_iweights, lambda x: x==irrep):
+    for irrep in sorted(set(normalized_iweights)):
+        for unsrt_idx in locate(normalized_iweights, lambda x: x==irrep):
             mapping[unsrt_idx] = srt_idx
             srt_idx += 1
     reorder = lambda X: tuple(X[idx] for idx in mapping)
@@ -733,10 +734,11 @@ def check_cgcs(product_iweights: list[tuple]) -> bool:
     the expected orthogonality conditions. Returns True if orthogonal.
     """
     cgc_dict = calc_cgcs(product_iweights)
-    ranges = [range(calc_dimension(R)) for R in product_iweights]
-    dim = 1
+    dim,ranges = 1,[]
     for R in product_iweights:
-        dim *= calc_dimension(R)
+        Rdim = calc_dimension(R)
+        dim *= Rdim
+        ranges.append(range(Rdim))
 
     # Create the CGC matrix as a sparse array. product_index is called
     # to avoid iterating over every product basis state.
