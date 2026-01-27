@@ -23,7 +23,10 @@ if __name__ == "__main__":
     work_dir = Path("./out")
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    # Set up cases to generate data for, and configure options
+    # Set up cases to generate data for, and configure options.
+    # Note that when saving to disk, plane tuples will be saved
+    # as string literals since JSON doesn't preserve this type
+    # info otherwise.
     FORDER = [1, 2, 3, -1, -2, -3]
     EPS = 1e-10
     N_colors = 3
@@ -101,7 +104,7 @@ if __name__ == "__main__":
                     "num_sites": lattice_case["num_sites"],
                     "PBCs": lattice_case["PBCs"],
                     "cutoff": lattice_case["cutoff"],
-                    "planes": list(map(str, lattice_case["planes"])), # For later JSON encoding
+                    "planes": list(map(str, lattice_case["planes"])), # type: ignore
                     "f_order": FORDER
                 }
 
@@ -113,7 +116,7 @@ if __name__ == "__main__":
             }
             # Compute plaquette states for each plane, and aggregate.
             plaq_states = []
-            for current_plane in lattice_case["planes"]:
+            for current_plane in lattice_case["planes"]: # type: ignore
                 plaq_site_plane = (lattice_origin, current_plane)
                 plaq_states += list(map(str, physical_plaquette_states(plaq_site_plane, sites, plaquettes, singlets, FORDER))) # For later JSON encoding.
 
@@ -124,7 +127,7 @@ if __name__ == "__main__":
             plaq_states_result_dict["data"] = plaq_states
 
             # save to disk
-            with lattice_case["file_path_state_data"].open("w", encoding="utf-8") as f:
+            with lattice_case["file_path_state_data"].open("w", encoding="utf-8") as f: # type: ignore
                 json.dump(plaq_states_result_dict, f)
 
         if output_mat_elem_json is True:
@@ -135,7 +138,7 @@ if __name__ == "__main__":
             }
             # Compute matrix elements for each plane
             mat_elems_by_plane = {}
-            for current_plane in lattice_case["planes"]:
+            for current_plane in lattice_case["planes"]: # type: ignore
                 plaq_site_plane = (lattice_origin, current_plane)
                 mat_elems_by_plane[current_plane] = calc_plaquette_elements(N_colors, plaq_site_plane, sites, plaquettes, truncation_irreps, singlets, conj_dict, FORDER, EPS, PRES, parallelize)
 
@@ -160,5 +163,5 @@ if __name__ == "__main__":
             mat_elem_result_dict["data"] = mat_elems_collapsed
 
             # save to disk
-            with lattice_case["file_path_mat_elem_data"].open("w", encoding="utf-8") as f:
+            with lattice_case["file_path_mat_elem_data"].open("w", encoding="utf-8") as f: # type: ignore
                 json.dump(mat_elem_result_dict, f)
