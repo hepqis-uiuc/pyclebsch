@@ -235,13 +235,14 @@ def find_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> d
     ~Pg. 11
     """
 
-    # For efficiency, sort the irreps from lowest weight to highest weight.
+    # For efficiency, sort the irreps from lowest dimension to highest dimension.
+    # Moreover, normalize the i-weights to avoid redundancies.
     # decomp_memo records decompositions done throughout the algorithm, so
     # repititions are avoided. gt_memo records GT-patterns of irreps
     # encountered in the algorithm to avoid duplicate calculations.
 
-    iweights = sorted(product_iweights, key=calc_dimension)
-    decomp_memo, gt_memo = {},{}
+    iweights = sorted((tuple(j-iweight[-1] for j in iweight) for iweight in product_iweights), key=calc_dimension)
+    decomp_memo,gt_memo = {},{}
 
     def decompose_two_irreps(R,Rp):
 
@@ -336,14 +337,16 @@ def find_symmetry_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=N
     """
 
     # Find all plethysms for each repeated irrep in product_iweights.
-    # keys is nearly list(set(product_iweights)), except the order of
+    # i-weights are normalized in normalized_iweights to identify repeated irreps.
+    # keys is nearly list(set(normalized_iweights)), except the order of
     # the irreps in keys is that of the irreps in plethysms. indices
     # is a list of lists of indices of each irrep in keys as it appears
-    # in product_iweights.
+    # in normalized_iweights.
 
-    plethysms = {R: find_plethysms(R,num) for R,num in Counter(product_iweights).items()}
+    normalized_iweights = [tuple(j-iweight[-1] for j in iweight) for iweight in product_iweights]
+    plethysms = {R: find_plethysms(R,num) for R,num in Counter(normalized_iweights).items()}
     keys = list(plethysms.keys())
-    indices = [list(locate(product_iweights, lambda x: x==R)) for R in keys]
+    indices = [list(locate(normalized_iweights, lambda x: x==R)) for R in keys]
 
     # direct_sum initializes the dictionary for the final result.
     # The plethysm polynomials are multiplied together, leading to
