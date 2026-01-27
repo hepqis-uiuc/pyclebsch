@@ -139,6 +139,10 @@ def _rim_hooks(partition, l):
     """Finds the rim hooks of a given length l
     for a given partition.
     """
+
+    # Reference for the Murnaghan–Nakayama rule, as suggested by GroupMath.
+    # https://www.sciencedirect.com/science/article/pii/S0747717104000112
+
     sequence = partition_to_sequence(partition)
     rhooks = []
     for i in range(len(sequence)-l):
