@@ -1,6 +1,6 @@
 version = 1
 revision = 3
-requires-python = ">=3.14"
+requires-python = "==3.14.*"
 
 [[package]]
 name = "colorama"
@@ -62,10 +62,10 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "more-itertools", specifier = ">=10.7" },
-    { name = "numpy", specifier = ">=2.2" },
-    { name = "scipy", specifier = ">=1.15" },
-    { name = "tqdm", specifier = ">=4.67" },
+    { name = "more-itertools", specifier = "~=10.7" },
+    { name = "numpy", specifier = "~=2.2" },
+    { name = "scipy", specifier = "~=1.15" },
+    { name = "tqdm", specifier = "~=4.67" },
 ]
 
 [[package]]
