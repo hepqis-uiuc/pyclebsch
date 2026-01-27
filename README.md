@@ -55,4 +55,8 @@ uv sync
 ```
 
 ## Usage
-There is a small script called run.py which demonstrates standard usage of some of the functionality of this package. We plan on adding more documentation in the future.
+Various scripts which make use of the functionality in `pyclebsch` are gathered in the `run` directory. To execute any of them run (for example):
+```shell
+uv run -m run.demo
+```
+If the script `run/some_script.py` exists, then replace `demo` with `some_script` to execute it instead. Additional scripts can be added this way.
