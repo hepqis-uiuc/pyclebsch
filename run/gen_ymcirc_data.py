@@ -11,10 +11,16 @@ the list lattice_cases below.
 See su_n_wilson_loop.py for more detailed
 information about various script options.
 """
-from pyclebsch.matrix_elements.lattice_data import *
-from pyclebsch.matrix_elements.plaquette_matrix_elements import calc_plaquette_elements
-from pathlib import Path
 import json
+from pathlib import Path
+
+from pyclebsch.matrix_elements.lattice_data import (
+    irreps_and_singlets,
+    physical_plaquette_states,
+    sites_links_and_plaquettes,
+)
+from pyclebsch.matrix_elements.plaquette_matrix_elements import calc_plaquette_elements
+import numpy as np
 
 if __name__ == "__main__":
     # Filesystem stuff
