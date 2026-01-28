@@ -1,10 +1,10 @@
-import pyclebsch.su_n_operators as ops
 import pyclebsch.cgc as cgc
+import pyclebsch.su_n_operators as ops
 
 # i-weights for "3", "3bar", and "8" in SU(3)
-irrep_3 = (1,0,0)
-irrep_3bar = (1,1,0)
-irrep_8 = (2,1,0)
+irrep_3 = (1, 0, 0)
+irrep_3bar = (1, 1, 0)
+irrep_8 = (2, 1, 0)
 
 """
 EXAMPLES FOR pyclebsch.su_n_operators
@@ -15,8 +15,10 @@ print(ops.calc_dimension(irrep_8))
 
 # GT-patterns which label basis states of SU(N) irrep
 for gt in ops.find_gt_patterns(irrep_8):
-    print(gt, ops.calc_weight(gt, 'z')) # GT-pattern with generalized Jz eigenvalues
-    print(f"{ops.ladder_op([gt], 1, '+')}\n") # GT-pattern raised with 1st generalized raising (ladder) operator
+    print(gt, ops.calc_weight(gt, "z"))  # GT-pattern with generalized Jz eigenvalues
+    print(
+        f"{ops.ladder_op([gt], 1, '+')}\n"
+    )  # GT-pattern raised with 1st generalized raising (ladder) operator
 
 # Find su(N) algebra basis (generators of SU(N) group elements)
 for T in ops.find_suN_basis(irrep_8):
