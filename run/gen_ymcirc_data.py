@@ -11,8 +11,11 @@ the list lattice_cases below.
 See su_n_wilson_loop.py for more detailed
 information about various script options.
 """
+
 import json
 from pathlib import Path
+
+import numpy as np
 
 from pyclebsch.matrix_elements.lattice_data import (
     irreps_and_singlets,
@@ -20,7 +23,6 @@ from pyclebsch.matrix_elements.lattice_data import (
     sites_links_and_plaquettes,
 )
 from pyclebsch.matrix_elements.plaquette_matrix_elements import calc_plaquette_elements
-import numpy as np
 
 if __name__ == "__main__":
     # Filesystem stuff
@@ -46,7 +48,8 @@ if __name__ == "__main__":
             "cutoff": 1,
             "planes": [(1, 2)],
             "file_path_state_data": work_dir / "T1_dim(3_2)_plaquette_states.json",
-            "file_path_mat_elem_data": work_dir / "T1_dim(3_2)_magnetic_hamiltonian.json"
+            "file_path_mat_elem_data": work_dir
+            / "T1_dim(3_2)_magnetic_hamiltonian.json",
         },
         {
             "dim": "d=3/2",
@@ -56,7 +59,8 @@ if __name__ == "__main__":
             "cutoff": 2,
             "planes": [(1, 2)],
             "file_path_state_data": work_dir / "T2_dim(3_2)_plaquette_states.json",
-            "file_path_mat_elem_data": work_dir / "T2_dim(3_2)_magnetic_hamiltonian.json"
+            "file_path_mat_elem_data": work_dir
+            / "T2_dim(3_2)_magnetic_hamiltonian.json",
         },
         {
             "dim": "d=2",
@@ -66,7 +70,7 @@ if __name__ == "__main__":
             "cutoff": 1,
             "planes": [(1, 2)],
             "file_path_state_data": work_dir / "T1_dim(2)_plaquette_states.json",
-            "file_path_mat_elem_data": work_dir / "T1_dim(2)_magnetic_hamiltonian.json"
+            "file_path_mat_elem_data": work_dir / "T1_dim(2)_magnetic_hamiltonian.json",
         },
         {
             "dim": "d=3",
@@ -76,7 +80,8 @@ if __name__ == "__main__":
             "cutoff": 1,
             "planes": [(1, 2), (2, 3), (1, 3)],
             "file_path_state_data": work_dir / "T1_dim(3)_OBC_plaquette_states.json",
-            "file_path_mat_elem_data": work_dir / "T1_dim(3)_OBC_magnetic_hamiltonian.json"
+            "file_path_mat_elem_data": work_dir
+            / "T1_dim(3)_OBC_magnetic_hamiltonian.json",
         },
         # {
         #     "dim": "d=3",
@@ -89,7 +94,7 @@ if __name__ == "__main__":
         #     "file_path_mat_elem_data": work_dir / "T1_dim(3)_cube_PBC_magnetic_hamiltonian.json"
         # },
     ]
-    parallelize = True         # May cause EOFError. Rerun if this happens.
+    parallelize = True  # May cause EOFError. Rerun if this happens.
 
     # Data generation.
     # Note: tuple data are converted to string types to prevent the JSON file
@@ -100,31 +105,39 @@ if __name__ == "__main__":
         truncation_mode = lattice_case["truncation_mode"]
         cutoff = lattice_case["cutoff"]
 
-        sites, links, plaquettes = sites_links_and_plaquettes(lattice_case["num_sites"], lattice_case["PBCs"], FORDER)
-        truncation_irreps, singlets, conj_dict = irreps_and_singlets(N_colors, sites, lattice_case["truncation_mode"], lattice_case["cutoff"])
+        sites, links, plaquettes = sites_links_and_plaquettes(
+            lattice_case["num_sites"], lattice_case["PBCs"], FORDER
+        )
+        truncation_irreps, singlets, conj_dict = irreps_and_singlets(
+            N_colors, sites, lattice_case["truncation_mode"], lattice_case["cutoff"]
+        )
         lattice_origin = (0, 0, 0)
 
         metadata_dict = {
-                    "dim": lattice_case["dim"],
-                    "truncation_mode": lattice_case["truncation_mode"],
-                    "num_sites": lattice_case["num_sites"],
-                    "PBCs": lattice_case["PBCs"],
-                    "cutoff": lattice_case["cutoff"],
-                    "planes": list(map(str, lattice_case["planes"])), # type: ignore
-                    "f_order": FORDER
-                }
+            "dim": lattice_case["dim"],
+            "truncation_mode": lattice_case["truncation_mode"],
+            "num_sites": lattice_case["num_sites"],
+            "PBCs": lattice_case["PBCs"],
+            "cutoff": lattice_case["cutoff"],
+            "planes": list(map(str, lattice_case["planes"])),  # type: ignore
+            "f_order": FORDER,
+        }
 
         if output_plaquette_states_json is True:
             print(f"Generating {lattice_case['file_path_state_data']}")
-            plaq_states_result_dict = {
-                "data": [],
-                "metadata": metadata_dict
-            }
+            plaq_states_result_dict = {"data": [], "metadata": metadata_dict}
             # Compute plaquette states for each plane, and aggregate.
             plaq_states = []
-            for current_plane in lattice_case["planes"]: # type: ignore
+            for current_plane in lattice_case["planes"]:  # type: ignore
                 plaq_site_plane = (lattice_origin, current_plane)
-                plaq_states += list(map(str, physical_plaquette_states(plaq_site_plane, sites, plaquettes, singlets, FORDER))) # For later JSON encoding.
+                plaq_states += list(
+                    map(
+                        str,
+                        physical_plaquette_states(
+                            plaq_site_plane, sites, plaquettes, singlets, FORDER
+                        ),
+                    )
+                )  # For later JSON encoding.
 
             # Remove duplicates from the list of plaquette states.
             plaq_states = list(set(plaq_states))
@@ -133,41 +146,59 @@ if __name__ == "__main__":
             plaq_states_result_dict["data"] = plaq_states
 
             # save to disk
-            with lattice_case["file_path_state_data"].open("w", encoding="utf-8") as f: # type: ignore
+            with lattice_case["file_path_state_data"].open("w", encoding="utf-8") as f:  # type: ignore
                 json.dump(plaq_states_result_dict, f)
 
         if output_mat_elem_json is True:
             print(f"Generating {lattice_case['file_path_mat_elem_data']}")
-            mat_elem_result_dict = {
-                "data": {},
-                "metadata": metadata_dict
-            }
+            mat_elem_result_dict = {"data": {}, "metadata": metadata_dict}
             # Compute matrix elements for each plane
             mat_elems_by_plane = {}
-            for current_plane in lattice_case["planes"]: # type: ignore
+            for current_plane in lattice_case["planes"]:  # type: ignore
                 plaq_site_plane = (lattice_origin, current_plane)
-                mat_elems_by_plane[current_plane] = calc_plaquette_elements(N_colors, plaq_site_plane, sites, plaquettes, truncation_irreps, singlets, conj_dict, FORDER, EPS, PRES, parallelize)
+                mat_elems_by_plane[current_plane] = calc_plaquette_elements(
+                    N_colors,
+                    plaq_site_plane,
+                    sites,
+                    plaquettes,
+                    truncation_irreps,
+                    singlets,
+                    conj_dict,
+                    FORDER,
+                    EPS,
+                    PRES,
+                    parallelize,
+                )
 
             # Merge into single dict
             mat_elems_merged = {}
             for current_plane, mat_elem_data in mat_elems_by_plane.items():
                 for (Pf, Pi), mat_elem_val in mat_elem_data.items():
-                    mat_elems_merged.setdefault((Pf, Pi), {})[current_plane] = mat_elem_val
+                    mat_elems_merged.setdefault((Pf, Pi), {})[current_plane] = (
+                        mat_elem_val
+                    )
 
             # Collapse plane info if a matrix element has the same value in all planes
             mat_elems_collapsed = {}
             for (Pf, Pi), plane_to_val_map in mat_elems_merged.items():
-                current_mat_elem_key_as_str = str((Pf, Pi)) # For later JSON encoding
+                current_mat_elem_key_as_str = str((Pf, Pi))  # For later JSON encoding
                 values = list(plane_to_val_map.values())
                 if np.allclose(values, values[0]) is True:
                     mat_elems_collapsed[current_mat_elem_key_as_str] = np.mean(values)
                 else:
-                    plane_to_val_map_keys_as_strings = {str(current_plane): mat_elem_val for current_plane, mat_elem_val in plane_to_val_map.items()} # For later JSON encoding
-                    mat_elems_collapsed[current_mat_elem_key_as_str] = plane_to_val_map_keys_as_strings
+                    plane_to_val_map_keys_as_strings = {
+                        str(current_plane): mat_elem_val
+                        for current_plane, mat_elem_val in plane_to_val_map.items()
+                    }  # For later JSON encoding
+                    mat_elems_collapsed[current_mat_elem_key_as_str] = (
+                        plane_to_val_map_keys_as_strings
+                    )
 
             # Construct json file
             mat_elem_result_dict["data"] = mat_elems_collapsed
 
             # save to disk
-            with lattice_case["file_path_mat_elem_data"].open("w", encoding="utf-8") as f: # type: ignore
+            with lattice_case["file_path_mat_elem_data"].open( # type: ignore
+                "w", encoding="utf-8"
+            ) as f:
                 json.dump(mat_elem_result_dict, f)
