@@ -24,6 +24,18 @@ from pyclebsch.matrix_elements.lattice_data import (
 )
 from pyclebsch.matrix_elements.plaquette_matrix_elements import calc_plaquette_elements
 
+
+def plaq_state_pyclebsch_to_ymcirc_format(plaq_state):
+    """
+    Convert a single plaquette state from pyclebsch's format to ymcirc's format.
+    """
+    a_links = tuple(plaq_state[:4])
+    c_links = tuple(plaq_state[4:8])
+    vertices = tuple(plaq_state[8:])
+
+    return (vertices, a_links, c_links)
+
+
 if __name__ == "__main__":
     # Filesystem stuff
     output_mat_elem_json = True
@@ -130,14 +142,13 @@ if __name__ == "__main__":
             plaq_states = []
             for current_plane in lattice_case["planes"]:  # type: ignore
                 plaq_site_plane = (lattice_origin, current_plane)
-                plaq_states += list(
-                    map(
-                        str,
-                        physical_plaquette_states(
-                            plaq_site_plane, sites, plaquettes, singlets, FORDER
-                        ),
+                plaq_states_current_plane = [
+                    str(plaq_state_pyclebsch_to_ymcirc_format(plaq_state))
+                    for plaq_state in physical_plaquette_states(
+                        plaq_site_plane, sites, plaquettes, singlets, FORDER
                     )
-                )  # For later JSON encoding.
+                ]
+                plaq_states += plaq_states_current_plane
 
             # Remove duplicates from the list of plaquette states.
             plaq_states = list(set(plaq_states))
@@ -181,7 +192,11 @@ if __name__ == "__main__":
             # Collapse plane info if a matrix element has the same value in all planes
             mat_elems_collapsed = {}
             for (Pf, Pi), plane_to_val_map in mat_elems_merged.items():
-                current_mat_elem_key_as_str = str((Pf, Pi))  # For later JSON encoding
+                Pf_ymcirc_format = plaq_state_pyclebsch_to_ymcirc_format(Pf)
+                Pi_ymcirc_format = plaq_state_pyclebsch_to_ymcirc_format(Pi)
+                current_mat_elem_key_as_str = str(
+                    (Pf_ymcirc_format, Pi_ymcirc_format)
+                )  # For later JSON encoding
                 values = list(plane_to_val_map.values())
                 if np.allclose(values, values[0]) is True:
                     mat_elems_collapsed[current_mat_elem_key_as_str] = np.mean(values)
@@ -198,7 +213,7 @@ if __name__ == "__main__":
             mat_elem_result_dict["data"] = mat_elems_collapsed
 
             # save to disk
-            with lattice_case["file_path_mat_elem_data"].open( # type: ignore
+            with lattice_case["file_path_mat_elem_data"].open(  # type: ignore
                 "w", encoding="utf-8"
             ) as f:
                 json.dump(mat_elem_result_dict, f)
