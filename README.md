@@ -8,10 +8,10 @@ This codebase is currently at an 'alpha' stage of development. Breaking changes 
 ## Installation
 This project uses [uv](https://docs.astral.sh/uv/getting-started/) for environment (packages, Python version) management. Ensure that you have uv installed (instructions for various operating systems available at the previously linked-to docs).
 
-Once you have uv installed, use it to execute project scripts, and the correct virtual environment will automatically be used. For example:
+Once you have uv installed, use it to execute project scripts (collected in the `run` directory), and the correct virtual environment will automatically be used. For example:
 
 ``` shell
-uv run run.py
+uv run -m run.demo
 ```
 There is no need to manually activate or deactivate the virtual environment. Information about the virtual environment is documented in `pyproject.toml`, and can be viewed by running
 ```shell
