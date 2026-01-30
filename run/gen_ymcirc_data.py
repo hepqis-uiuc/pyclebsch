@@ -12,28 +12,41 @@ See su_n_wilson_loop.py for more detailed
 information about various script options.
 """
 
+import gzip
 import json
 from pathlib import Path
 
 import numpy as np
 
 from pyclebsch.matrix_elements.lattice_data import (
-    SiteMultiplicityIndex,
-    SiteControlLinks,
     ActiveLink,
     PlaquetteState,
+    SiteControlLinks,
+    SiteMultiplicityIndex,
     irreps_and_singlets,
     physical_plaquette_states,
     sites_links_and_plaquettes,
 )
 from pyclebsch.matrix_elements.plaquette_matrix_elements import calc_plaquette_elements
 
-type SiteMultiplicitiesGroup = tuple[SiteMultiplicityIndex, SiteMultiplicityIndex, SiteMultiplicityIndex, SiteMultiplicityIndex]
+type SiteMultiplicitiesGroup = tuple[
+    SiteMultiplicityIndex,
+    SiteMultiplicityIndex,
+    SiteMultiplicityIndex,
+    SiteMultiplicityIndex,
+]
 type ActiveLinksGroup = tuple[ActiveLink, ActiveLink, ActiveLink, ActiveLink]
-type ControlLinksGroup = tuple[SiteControlLinks, SiteControlLinks, SiteControlLinks, SiteControlLinks]
-type PlaquetteStateYmcircFmt = tuple[SiteMultiplicitiesGroup, ActiveLinksGroup, ControlLinksGroup]
+type ControlLinksGroup = tuple[
+    SiteControlLinks, SiteControlLinks, SiteControlLinks, SiteControlLinks
+]
+type PlaquetteStateYmcircFmt = tuple[
+    SiteMultiplicitiesGroup, ActiveLinksGroup, ControlLinksGroup
+]
 
-def plaq_state_pyclebsch_to_ymcirc_format(plaq_state: PlaquetteState) -> PlaquetteStateYmcircFmt:
+
+def plaq_state_pyclebsch_to_ymcirc_format(
+    plaq_state: PlaquetteState,
+) -> PlaquetteStateYmcircFmt:
     """
     Convert a single plaquette state from pyclebsch's format to ymcirc's format.
     """
@@ -69,9 +82,9 @@ if __name__ == "__main__":
             "PBCs": [True, False, False],
             "cutoff": 1,
             "planes": [(1, 2)],
-            "file_path_state_data": work_dir / "T1_dim(3_2)_plaquette_states.json",
+            "file_path_state_data": work_dir / "T1_dim(3_2)_plaquette_states.json.gz",
             "file_path_mat_elem_data": work_dir
-            / "T1_dim(3_2)_magnetic_hamiltonian.json",
+            / "T1_dim(3_2)_magnetic_hamiltonian.json.gz",
         },
         {
             "dim": "d=3/2",
@@ -80,9 +93,9 @@ if __name__ == "__main__":
             "PBCs": [True, False, False],
             "cutoff": 2,
             "planes": [(1, 2)],
-            "file_path_state_data": work_dir / "T2_dim(3_2)_plaquette_states.json",
+            "file_path_state_data": work_dir / "T2_dim(3_2)_plaquette_states.json.gz",
             "file_path_mat_elem_data": work_dir
-            / "T2_dim(3_2)_magnetic_hamiltonian.json",
+            / "T2_dim(3_2)_magnetic_hamiltonian.json.gz",
         },
         {
             "dim": "d=2",
@@ -91,8 +104,9 @@ if __name__ == "__main__":
             "PBCs": [True, True, False],
             "cutoff": 1,
             "planes": [(1, 2)],
-            "file_path_state_data": work_dir / "T1_dim(2)_plaquette_states.json",
-            "file_path_mat_elem_data": work_dir / "T1_dim(2)_magnetic_hamiltonian.json",
+            "file_path_state_data": work_dir / "T1_dim(2)_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir
+            / "T1_dim(2)_magnetic_hamiltonian.json.gz",
         },
         {
             "dim": "d=3",
@@ -101,9 +115,9 @@ if __name__ == "__main__":
             "PBCs": [False, False, False],
             "cutoff": 1,
             "planes": [(1, 2), (2, 3), (1, 3)],
-            "file_path_state_data": work_dir / "T1_dim(3)_OBC_plaquette_states.json",
+            "file_path_state_data": work_dir / "T1_dim(3)_OBC_plaquette_states.json.gz",
             "file_path_mat_elem_data": work_dir
-            / "T1_dim(3)_OBC_magnetic_hamiltonian.json",
+            / "T1_dim(3)_OBC_magnetic_hamiltonian.json.gz",
         },
         # {
         #     "dim": "d=3",
@@ -112,8 +126,8 @@ if __name__ == "__main__":
         #     "PBCs": [True, True, True],
         #     "cutoff": 1,
         #     "planes": [(1, 2), (2, 3), (1, 3)],
-        #     "file_path_state_data": work_dir / "T1_dim(3)_cube_PBC_plaquette_states.json",
-        #     "file_path_mat_elem_data": work_dir / "T1_dim(3)_cube_PBC_magnetic_hamiltonian.json"
+        #     "file_path_state_data": work_dir / "T1_dim(3)_cube_PBC_plaquette_states.json.gz",
+        #     "file_path_mat_elem_data": work_dir / "T1_dim(3)_cube_PBC_magnetic_hamiltonian.json.gz"
         # },
     ]
     parallelize = True  # May cause EOFError. Rerun if this happens.
@@ -167,7 +181,9 @@ if __name__ == "__main__":
             plaq_states_result_dict["data"] = plaq_states
 
             # save to disk
-            with lattice_case["file_path_state_data"].open("w", encoding="utf-8") as f:  # type: ignore
+            with gzip.open(
+                lattice_case["file_path_state_data"], "wt", encoding="utf-8"
+            ) as f:
                 json.dump(plaq_states_result_dict, f)
 
         if output_mat_elem_json is True:
@@ -223,7 +239,7 @@ if __name__ == "__main__":
             mat_elem_result_dict["data"] = mat_elems_collapsed
 
             # save to disk
-            with lattice_case["file_path_mat_elem_data"].open(  # type: ignore
-                "w", encoding="utf-8"
+            with gzip.open(
+                lattice_case["file_path_mat_elem_data"], "wt", encoding="utf-8"
             ) as f:
                 json.dump(mat_elem_result_dict, f)
