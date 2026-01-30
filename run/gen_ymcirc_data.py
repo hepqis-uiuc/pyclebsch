@@ -18,20 +18,30 @@ from pathlib import Path
 import numpy as np
 
 from pyclebsch.matrix_elements.lattice_data import (
+    SiteMultiplicityIndex,
+    SiteControlLinks,
+    ActiveLink,
+    PlaquetteState,
     irreps_and_singlets,
     physical_plaquette_states,
     sites_links_and_plaquettes,
 )
 from pyclebsch.matrix_elements.plaquette_matrix_elements import calc_plaquette_elements
 
+type SiteMultiplicitiesGroup = tuple[SiteMultiplicityIndex, SiteMultiplicityIndex, SiteMultiplicityIndex, SiteMultiplicityIndex]
+type ActiveLinksGroup = tuple[ActiveLink, ActiveLink, ActiveLink, ActiveLink]
+type ControlLinksGroup = tuple[SiteControlLinks, SiteControlLinks, SiteControlLinks, SiteControlLinks]
+type PlaquetteStateYmcircFmt = tuple[SiteMultiplicitiesGroup, ActiveLinksGroup, ControlLinksGroup]
 
-def plaq_state_pyclebsch_to_ymcirc_format(plaq_state):
+def plaq_state_pyclebsch_to_ymcirc_format(plaq_state: PlaquetteState) -> PlaquetteStateYmcircFmt:
     """
     Convert a single plaquette state from pyclebsch's format to ymcirc's format.
     """
     a_links = tuple(plaq_state[:4])
     c_links = tuple(plaq_state[4:8])
     vertices = tuple(plaq_state[8:])
+    if len(vertices) != 4:
+        raise ValueError(f"Expected 4 sites. Site count: '{len(vertices)}'.")
 
     return (vertices, a_links, c_links)
 

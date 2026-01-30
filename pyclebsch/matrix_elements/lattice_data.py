@@ -7,9 +7,27 @@ from tqdm import tqdm
 from .helpers import *
 from ..cgc import calc_cgcs
 from collections import defaultdict
-from ..su_n_operators import find_direct_sum
+from ..su_n_operators import find_direct_sum, IrrepWeight
 from more_itertools import distinct_permutations
 from itertools import product, combinations_with_replacement
+
+type SiteMultiplicityIndex = int
+type SiteControlLinks = tuple[IrrepWeight, ...]
+type ActiveLink = IrrepWeight
+type PlaquetteState = tuple[
+    ActiveLink,
+    ActiveLink,
+    ActiveLink,
+    ActiveLink,
+    SiteControlLinks,
+    SiteControlLinks,
+    SiteControlLinks,
+    SiteControlLinks,
+    SiteMultiplicityIndex,
+    SiteMultiplicityIndex,
+    SiteMultiplicityIndex,
+    SiteMultiplicityIndex
+]
 
 def sites_links_and_plaquettes(num_sites, PBCs, FORDER):
     """
@@ -207,7 +225,7 @@ def irreps_and_singlets(N, sites, truncation_mode, cutoff):
 
     return link_irreps, site_singlets, conj_dict
 
-def physical_plaquette_states(P, sites, plaquettes, singlets, FORDER):
+def physical_plaquette_states(P, sites, plaquettes, singlets, FORDER) -> list[PlaquetteState]:
     """
     Generates a list of physical plaquette states for a plaquette P. P is a
     tuple (site coordinate, lattice plane), such as ((0,0,0), (1,2)). The states
