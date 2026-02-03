@@ -66,18 +66,18 @@ Note that all test files must be named `test_[something].py`!
 ### Running tests
 If you want to run all tests in the `test` directory, activate the virtual environment and then type:
 ```
-uv run pytest -v
+uv run -m pytest -v
 ```
 The `-v` flag is optional and simply outputs additional debug info. Another useful flag is `-s`, which enables displaying all print statements generated while tests are running.
 
 If you want to run all tests in a specific file:
 ```
-uv run pytest tests/test_[file].py
+uv run -m pytest tests/test_[file].py
 ```
 
 If you want to run *just one* test:
 ```
-uv run pytest tests/test_mod.py::test_func.
+uv run -m pytest tests/test_mod.py::test_func.
 ```
 
 There's also more complete documentation on [how to invoke pytest](https://docs.pytest.org/en/stable/how-to/usage.html) which presents some additional features.
@@ -92,7 +92,7 @@ def test_this_is_some_slow_test():
 
 `conftest.py` is set up so that any test marked this way will be skipped by default. To include slow tests in a test run:
 ```
-uv run pytest --runslow
+uv run -m pytest --runslow
 ```
 
 ## Usage

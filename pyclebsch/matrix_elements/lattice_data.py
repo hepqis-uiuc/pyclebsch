@@ -47,6 +47,56 @@ class LatticeDef:
     num_sites: tuple[int, int, int]
     PBCs: tuple[bool, bool, bool]
 
+    @property
+    def planes(self) -> tuple[Plane] | tuple[Plane, Plane, Plane]:
+        if hasattr(self, "_lattice_planes"):
+            return self._lattice_planes
+        if any(self.num_sites) < 1:
+            raise ValueError(
+                f"Malformed lattice encountered while attempting to compute plane. num_sites should consist of positive integers but encountered the tuple '{self.num_sites}'."
+            )
+        possible_planes = [(1, 2), (1, 3), (2, 3)]
+        self._lattice_planes = tuple(filter(self._plane_exists, possible_planes))
+
+        return self._lattice_planes
+            
+
+    def _plane_exists(self, plane: Plane) -> bool:
+        """Check if plane can be formed on the lattice."""
+        # Switch to using zero-indexed plane info.
+        dir_1, dir_2 = sorted(plane)
+        dir_1_zero_indexed = abs(dir_1) - 1
+        dir_2_zero_indexed = abs(dir_2) - 1
+
+        # Boolean tests to establish existence.
+        lattice_plane_large_enough_despite_boundary_conds = (
+            self.num_sites[dir_1_zero_indexed] >= 2
+            and self.num_sites[dir_2_zero_indexed] >= 2
+        )
+        lattice_plane_has_one_large_direction_and_one_small_periodic_direction = (
+            self.num_sites[dir_1_zero_indexed] >= 2
+            and self.num_sites[dir_2_zero_indexed] == 1
+            and (self.PBCs[dir_2_zero_indexed] is True)
+        ) or (
+            self.num_sites[dir_1_zero_indexed] == 1
+            and self.num_sites[dir_2_zero_indexed] >= 2
+            and (self.PBCs[dir_1_zero_indexed] is True)
+        )
+        lattice_plane_has_two_small_but_periodic_directions = (
+            self.num_sites[dir_1_zero_indexed] == 1
+            and self.num_sites[dir_2_zero_indexed] == 1
+            and (self.PBCs[dir_1_zero_indexed] is True)
+            and (self.PBCs[dir_2_zero_indexed] is True)
+        )
+        if (
+            lattice_plane_large_enough_despite_boundary_conds
+            or lattice_plane_has_one_large_direction_and_one_small_periodic_direction
+            or lattice_plane_has_two_small_but_periodic_directions
+        ):
+            return True
+        else:
+            return False
+        
 
 def sites_links_and_plaquettes(num_sites, PBCs, FORDER):
     """
