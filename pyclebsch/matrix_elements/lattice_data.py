@@ -2,6 +2,9 @@
 LATTICE DATA
 """
 
+from dataclasses import dataclass
+from typing import Literal
+
 import numpy as np
 from tqdm import tqdm
 from .helpers import *
@@ -26,8 +29,24 @@ type PlaquetteState = tuple[
     SiteMultiplicityIndex,
     SiteMultiplicityIndex,
     SiteMultiplicityIndex,
-    SiteMultiplicityIndex
+    SiteMultiplicityIndex,
 ]
+type SiteCoordinate = tuple[int, int] | tuple[int, int, int]
+type LinkDirection = Literal[1, 2, 3, -1, -2, -3]
+type Plane = tuple[LinkDirection, LinkDirection]
+type SiteHalfLinks = tuple[LinkDirection, LinkDirection, ...]
+type PlaquetteSignature = tuple[
+    Plane, tuple[SiteHalfLinks, SiteHalfLinks, SiteHalfLinks, SiteHalfLinks]
+]
+
+
+@dataclass
+class LatticeDef:
+    """Class for defining the geometry of a lattice."""
+
+    num_sites: tuple[int, int, int]
+    PBCs: tuple[bool, bool, bool]
+
 
 def sites_links_and_plaquettes(num_sites, PBCs, FORDER):
     """
@@ -408,3 +427,15 @@ def physical_plaquette_states(P, sites, plaquettes, singlets, FORDER) -> list[Pl
     del s4
 
     return states
+
+def compute_plaquette_signature(
+        plane: Plane, bottom_left_site: SiteCoordinate, lattice: LatticeDef
+) -> PlaquetteSignature:
+    """
+    Obtain the 'signature' associated with the plaquette in plane whose first site is bottom_left_site.
+
+    A plaquette's signature captures the notion of whether a plaquette is on the edge, interior, or corner
+    of a lattice. This is relevant because that information (along with plane and FORDER) are necessary to
+    unambiguously compute matrix elements of Wilson loops.
+    """
+    raise NotImplementedError("Function not yet written.")
