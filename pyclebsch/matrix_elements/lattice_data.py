@@ -35,6 +35,8 @@ type SiteCoordinate = tuple[int, int] | tuple[int, int, int]
 type LinkDirection = Literal[1, 2, 3, -1, -2, -3]
 type Plane = tuple[LinkDirection, LinkDirection]
 type SiteHalfLinks = tuple[LinkDirection, LinkDirection, ...]
+type LinkAddress = tuple[SiteCoordinate, LinkDirection]
+type PlaquetteAddress = tuple[SiteCoordinate, Plane]
 type PlaquetteSignature = tuple[
     Plane, tuple[SiteHalfLinks, SiteHalfLinks, SiteHalfLinks, SiteHalfLinks] | tuple[()]
 ]
@@ -120,7 +122,11 @@ class LatticeDef:
             return False
         
 
-def sites_links_and_plaquettes(num_sites, PBCs, FORDER):
+def sites_links_and_plaquettes(num_sites: tuple[int | int ]list[int], PBCs, FORDER) -> tuple[
+        dict[SiteCoordinate, SiteHalfLinks],
+        dict[LinkAddress, tuple[SiteCoordinate, SiteCoordinate]],
+        dict[PlaquetteAddress, tuple[list[LinkAddress], list[LinkAddress], list[SiteCoordinate], list[int]]]
+]:
     """
     Sets up sites, links, and plaquettes of the cubic lattice.
     Sites are returned as a dictionary whose keys are site coordinates and whose
@@ -130,7 +136,10 @@ def sites_links_and_plaquettes(num_sites, PBCs, FORDER):
     Plaquettes are returned as keys of a dictionary with values of the form
     [ [plaquette links], [lists of control links], [plaquette sites],
     [unique control links] ]. Unique control links are identified by whether
-    they appear multiple times due to periodic boundary conditions.
+    they appear multiple times due to periodic boundary conditions (i.e. the
+    list of unique control links is a list counting how many times each
+    link in the list of controls appears; if an element is zero, then
+    that means the corresponding control link is unique).
     """
 
     # Check inputs.
