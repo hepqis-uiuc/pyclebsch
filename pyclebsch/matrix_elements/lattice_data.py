@@ -36,7 +36,7 @@ type LinkDirection = Literal[1, 2, 3, -1, -2, -3]
 type Plane = tuple[LinkDirection, LinkDirection]
 type SiteHalfLinks = tuple[LinkDirection, LinkDirection, ...]
 type PlaquetteSignature = tuple[
-    Plane, tuple[SiteHalfLinks, SiteHalfLinks, SiteHalfLinks, SiteHalfLinks]
+    Plane, tuple[SiteHalfLinks, SiteHalfLinks, SiteHalfLinks, SiteHalfLinks] | tuple[()]
 ]
 
 
@@ -59,6 +59,28 @@ class LatticeDef:
         self._lattice_planes = tuple(filter(self._plane_exists, possible_planes))
 
         return self._lattice_planes
+
+    def site_exists(self, site: SiteCoordinate, periodic_ok: bool = True) -> bool:
+        """
+        Check whether site exists on the lattice.
+
+        If periodic_ok is True, then (for any periodic directions) the lattice coordinate
+        is wrapped around before checking for site existence (i.e. any int is allowed).
+        For nonperiodic directions, this is NOT done (the allowed range is between zero
+        and the corresponding entry in num_sites minus 1).
+        """
+        if len(site) != 3:
+            raise ValueError(f"Lattice site '{site}' should be a 3-tuple of ints.")
+        for idx, current_dir_max in enumerate(self.num_sites):
+            if not isinstance(site[idx], int):
+                raise ValueError(f"Lattice site '{site}' should be a 3-tuple of ints.")
+            current_dir_is_periodic_and_periodic_ok = self.PBCs[idx] and periodic_ok
+            site_is_between_zero_and_current_dir_max = (site[idx] >= 0) and (site[idx] < current_dir_max)
+            current_dir_in_range = True if current_dir_is_periodic_and_periodic_ok is True else site_is_between_zero_and_current_dir_max
+            if current_dir_in_range is False:
+                return False
+
+        return True
             
 
     def _plane_exists(self, plane: Plane) -> bool:
@@ -487,5 +509,10 @@ def compute_plaquette_signature(
     A plaquette's signature captures the notion of whether a plaquette is on the edge, interior, or corner
     of a lattice. This is relevant because that information (along with plane and FORDER) are necessary to
     unambiguously compute matrix elements of Wilson loops.
+
+    If it is not possible to form a plaquette in the requested plane, then the returned PlaquetteSignature
+    will have an empty tuple as its second element (which otherwise gives half-link data per site). This can
+    occur when requesting a plaquette signature on the boundaries of a non-periodic lattice direction.
     """
+    
     raise NotImplementedError("Function not yet written.")

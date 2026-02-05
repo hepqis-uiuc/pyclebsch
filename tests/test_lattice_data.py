@@ -1,4 +1,9 @@
-from pyclebsch.matrix_elements.lattice_data import LatticeDef, compute_plaquette_signature
+import pytest
+from pyclebsch.matrix_elements.lattice_data import (
+    LatticeDef,
+    compute_plaquette_signature,
+)
+
 
 def test_lattice_def_planes():
     """Check that we get the right planes for various lattices."""
@@ -38,6 +43,36 @@ def test_lattice_def_planes():
     assert lattice.planes == ((1, 2), (1, 3), (2, 3))
     lattice = LatticeDef(num_sites=(4, 3, 2), PBCs=(False, False, False))
     assert lattice.planes == ((1, 2), (1, 3), (2, 3))
+
+
+def test_lattice_def_site_exists():
+    """Check that the 'site exists' functionality gives the correct results."""
+
+    lattice = LatticeDef(num_sites=(2, 1, 4), PBCs=(False, True, True))
+    nonexistent_sites = [(2, 0, 0), (2, 1, 4), (2, -1, -1), (2, -1, 3)]
+    existent_sites_strict = [(0, 0, 0), (0, 0, 1), (1, 0, 3)]
+    existent_sites_periodic_ok = [(0, -1, 10), (0, -3, 20), (1, 1, 4)]
+
+    for site in nonexistent_sites:
+        assert lattice.site_exists(site) is False
+
+    for site in existent_sites_strict:
+        assert lattice.site_exists(site, periodic_ok=False) is True
+        assert lattice.site_exists(site, periodic_ok=True) is True
+
+    for site in existent_sites_periodic_ok:
+        assert lattice.site_exists(site, periodic_ok=False) is False
+        assert lattice.site_exists(site, periodic_ok=True) is True
+
+
+def test_lattice_def_site_exists_value_error():
+    """Should get ValueError for non 3-tuple of ints input."""
+    lattice = LatticeDef(num_sites=(2, 1, 4), PBCs=(False, True, True))
+    with pytest.raises(ValueError) as e_info:
+        lattice.site_exists(site=(1.0, 1, 1))
+    with pytest.raises(ValueError) as e_info:
+        lattice.site_exists(site=(1, 1, 1, 1))
+
 
 def test_compute_plaquette_signature():
     # test_cases = {
