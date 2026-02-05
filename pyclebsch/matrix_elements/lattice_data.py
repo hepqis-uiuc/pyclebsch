@@ -38,7 +38,7 @@ type SiteHalfLinks = tuple[LinkDirection, LinkDirection, ...]
 type LinkAddress = tuple[SiteCoordinate, LinkDirection]
 type PlaquetteAddress = tuple[SiteCoordinate, Plane]
 type PlaquetteSignature = tuple[
-    Plane, tuple[SiteHalfLinks, SiteHalfLinks, SiteHalfLinks, SiteHalfLinks] | tuple[()]
+    Plane, tuple[SiteHalfLinks, ...] | tuple[()]
 ]
 
 
@@ -48,6 +48,7 @@ class LatticeDef:
 
     num_sites: tuple[int, int, int]
     PBCs: tuple[bool, bool, bool]
+    FORDER: tuple[LinkDirection, LinkDirection, LinkDirection, LinkDirection, LinkDirection, LinkDirection] | list[LinkDirection]
 
     @property
     def planes(self) -> tuple[Plane] | tuple[Plane, Plane, Plane]:
@@ -61,6 +62,33 @@ class LatticeDef:
         self._lattice_planes = tuple(filter(self._plane_exists, possible_planes))
 
         return self._lattice_planes
+
+    @property
+    def sites(self) -> dict[SiteCoordinate, SiteHalfLinks]:
+        """
+        The half-links connected to a given lattice site.
+        """
+        if not hasattr(self, "_sites"):
+            self._sites, self._links, self._plaquettes = sites_links_and_plaquettes(self.num_sites, self.PBCs, self.FORDER)
+        return self._sites
+
+    @property
+    def links(self) -> dict[LinkAddress, tuple[SiteCoordinate, SiteCoordinate]]:
+        """
+        The start and stop site coordinates associated with links in the lattice.
+        """
+        if not hasattr(self, "_links"):
+            self._sites, self._links, self._plaquettes = sites_links_and_plaquettes(self.num_sites, self.PBCs, self.FORDER)
+        return self._links
+
+    @property
+    def plaquettes(self) -> dict[PlaquetteAddress, tuple[list[LinkAddress], list[LinkAddress], list[SiteCoordinate], list[int]]]:
+        """
+        Four-tuples of active links, control links, site coordinates, and unique controls for plaquettes.
+        """
+        if not hasattr(self, "_plaquettes"):
+            self._sites, self._links, self._plaquettes = sites_links_and_plaquettes(self.num_sites, self.PBCs, self.FORDER)
+        return self._plaquettes
 
     def site_exists(self, site: SiteCoordinate, periodic_ok: bool = True) -> bool:
         """
@@ -513,15 +541,29 @@ def compute_plaquette_signature(
         plaquette_address: PlaquetteAddress, lattice: LatticeDef
 ) -> PlaquetteSignature:
     """
-    Obtain the 'signature' associated with the plaquette in plane whose first site is bottom_left_site.
+    Obtain the 'signature' associated with the plaquette defined by plaquette_address.
+
+    The argument plaquette_address is a 2-tuple whose first element is a site coordinate,
+    and whose second element is a plane (defined as a 2-tuple of sorted, positive link directions).
+    In the given plane, the site coordinate is the "bottom-left" vertex of the plaquette.
 
     A plaquette's signature captures the notion of whether a plaquette is on the edge, interior, or corner
     of a lattice. This is relevant because that information (along with plane and FORDER) are necessary to
-    unambiguously compute matrix elements of Wilson loops.
+    unambiguously compute matrix elements of Wilson loops. As a convenience, the half links at each site
+    appearing in the signature are sorted according to the value of the FORDER property on lattice.
 
     If it is not possible to form a plaquette in the requested plane, then the returned PlaquetteSignature
     will have an empty tuple as its second element (which otherwise gives half-link data per site). This can
     occur when requesting a plaquette signature on the boundaries of a non-periodic lattice direction.
     """
-    
-    raise NotImplementedError("Function not yet written.")
+    bottom_left_vertex, plane = plaquette_address
+    if plaquette_address in lattice.plaquettes.keys():
+        active_links, control_links, plaquette_site_coordinates, unique_links = lattice.plaquettes[plaquette_address]
+        sites_with_half_links = tuple(
+            tuple(sorted(lattice.sites[site_coordinate], key=lambda x: lattice.FORDER.index(x)))
+            for site_coordinate in plaquette_site_coordinates)
+    else:
+        sites_with_half_links = () # Plaquette doesn't exist, return empty tuple.
+
+    signature = (plane, sites_with_half_links)
+    return signature
