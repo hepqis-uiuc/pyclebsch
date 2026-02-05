@@ -122,7 +122,7 @@ class LatticeDef:
             return False
         
 
-def sites_links_and_plaquettes(num_sites: tuple[int | int ]list[int], PBCs, FORDER) -> tuple[
+def sites_links_and_plaquettes(num_sites: tuple[int, int, int] | list[int], PBCs: tuple[bool, bool, bool] | list[bool], FORDER) -> tuple[
         dict[SiteCoordinate, SiteHalfLinks],
         dict[LinkAddress, tuple[SiteCoordinate, SiteCoordinate]],
         dict[PlaquetteAddress, tuple[list[LinkAddress], list[LinkAddress], list[SiteCoordinate], list[int]]]
@@ -510,7 +510,7 @@ def physical_plaquette_states(P, sites, plaquettes, singlets, FORDER) -> list[Pl
     return states
 
 def compute_plaquette_signature(
-        plane: Plane, bottom_left_site: SiteCoordinate, lattice: LatticeDef
+        plaquette_address: PlaquetteAddress, lattice: LatticeDef
 ) -> PlaquetteSignature:
     """
     Obtain the 'signature' associated with the plaquette in plane whose first site is bottom_left_site.
