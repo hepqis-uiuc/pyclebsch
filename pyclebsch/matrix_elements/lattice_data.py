@@ -34,12 +34,16 @@ type PlaquetteState = tuple[
 type SiteCoordinate = tuple[int, int] | tuple[int, int, int]
 type LinkDirection = Literal[1, 2, 3, -1, -2, -3]
 type Plane = tuple[LinkDirection, LinkDirection]
-type SiteHalfLinks = tuple[LinkDirection, LinkDirection, ...]
+type SiteHalfLinks = list[LinkDirection]
 type LinkAddress = tuple[SiteCoordinate, LinkDirection]
+type PlaquetteActiveLinkAddresses = tuple[LinkAddress, LinkAddress, LinkAddress, LinkAddress]
+type PlaquetteControlLinkAddresses = tuple[list[LinkAddress], list[LinkAddress], list[LinkAddress], list[LinkAddress]]
+type PlaquetteSiteCoordinates = tuple[SiteCoordinate, SiteCoordinate, SiteCoordinate, SiteCoordinate]
+type PlaquetteUniqueControls = tuple[list[int], list[int], list[int], list[int]]
 type PlaquetteAddress = tuple[SiteCoordinate, Plane]
 type PlaquetteSignature = tuple[
-    Plane, tuple[SiteHalfLinks, ...] | tuple[()]
-]
+    Plane, tuple[SiteHalfLinks, SiteHalfLinks, SiteHalfLinks, SiteHalfLinks] | tuple[()]
+] # TODO make a class to enforce forder?
 
 
 @dataclass
@@ -66,7 +70,7 @@ class LatticeDef:
     @property
     def sites(self) -> dict[SiteCoordinate, SiteHalfLinks]:
         """
-        The half-links connected to a given lattice site.
+        The F-ordered half-links connected to a given lattice site.
         """
         if not hasattr(self, "_sites"):
             self._sites, self._links, self._plaquettes = sites_links_and_plaquettes(self.num_sites, self.PBCs, self.FORDER)
@@ -82,9 +86,26 @@ class LatticeDef:
         return self._links
 
     @property
-    def plaquettes(self) -> dict[PlaquetteAddress, tuple[list[LinkAddress], list[LinkAddress], list[SiteCoordinate], list[int]]]:
+    def plaquettes(self) -> dict[
+            PlaquetteAddress, tuple[
+                PlaquetteActiveLinkAddresses,
+                PlaquetteControlLinkAddresses,
+                PlaquetteSiteCoordinates,
+                PlaquetteUniqueControls]]:
         """
         Four-tuples of active links, control links, site coordinates, and unique controls for plaquettes.
+
+        - Active links go CCW in the plaquette plane starting from the "bottom-left" site.
+        - Control links are presented as a length-4 list of F-ordered non-active links
+          attached to each site, following the "CCW from bottom-left site" ordering convention.
+        - Sites are the lattice coordinates of each site in the plaquette, also CCW-ordered.
+        - Unique controls is a list of indices for the controls in each corresponding site,
+          with later duplicates filtered out. This allows for determination of the set of
+          actual physical links which are controls without overcounting. For example, if
+          the control link at index zero on the first site is also a control for the second
+          site, then the first element of the unique controls list will contain the index '0',
+          and the index in the second element of unique controls which corresponds to that
+          physical link will be omitted.
         """
         if not hasattr(self, "_plaquettes"):
             self._sites, self._links, self._plaquettes = sites_links_and_plaquettes(self.num_sites, self.PBCs, self.FORDER)
@@ -153,7 +174,7 @@ class LatticeDef:
 def sites_links_and_plaquettes(num_sites: tuple[int, int, int] | list[int], PBCs: tuple[bool, bool, bool] | list[bool], FORDER) -> tuple[
         dict[SiteCoordinate, SiteHalfLinks],
         dict[LinkAddress, tuple[SiteCoordinate, SiteCoordinate]],
-        dict[PlaquetteAddress, tuple[list[LinkAddress], list[LinkAddress], list[SiteCoordinate], list[int]]]
+        dict[PlaquetteAddress, tuple[PlaquetteActiveLinkAddresses, PlaquetteControlLinkAddresses, PlaquetteSiteCoordinates, PlaquetteUniqueControls]]
 ]:
     """
     Sets up sites, links, and plaquettes of the cubic lattice.
@@ -197,7 +218,7 @@ def sites_links_and_plaquettes(num_sites: tuple[int, int, int] | list[int], PBCs
     # Links are labeled by a tuple (lattice coordinate, positive lattice direction).
     # Using lengths and PBCs, each lattice link is found, and, in the process,
     # the directions of half-links connected to each site are appended. Values
-    # of the dictionary links are [starting site, ending site].
+    # of the dictionary links are (starting site, ending site).
     links = {}
     for s in sites:
         for i in range(3):
@@ -211,7 +232,7 @@ def sites_links_and_plaquettes(num_sites: tuple[int, int, int] | list[int], PBCs
                     s_i[i] += 1
                 s_i = tuple(s_i)
                 sites[s].append(i+1), sites[s_i].append(-(i+1))
-                links[(s, i+1)] = [s,s_i]
+                links[(s, i+1)] = tuple([s,s_i])
     
     # Plaquette links and sites are labeled as
     # s4 -- l3 -- s3
@@ -275,7 +296,7 @@ def sites_links_and_plaquettes(num_sites: tuple[int, int, int] | list[int], PBCs
                                 if all(C not in clist for clist in ctrl_links): uniques.append(count)
                                 count += 1
                         ctrl_links.append(clinks), unique_ctrls.append(uniques)
-                    plaquettes[(s1, (i+1,j+1))] = [[l1,l2,l3,l4]] + [ctrl_links] + [[s1,s2,s3,s4]] + [unique_ctrls]
+                    plaquettes[(s1, (i+1,j+1))] = [tuple([l1,l2,l3,l4])] + [tuple(ctrl_links)] + [tuple([s1,s2,s3,s4])] + [tuple(unique_ctrls)]
 
     return sites, links, plaquettes
 
@@ -556,9 +577,9 @@ def compute_plaquette_signature(
     will have an empty tuple as its second element (which otherwise gives half-link data per site). This can
     occur when requesting a plaquette signature on the boundaries of a non-periodic lattice direction.
     """
-    bottom_left_vertex, plane = plaquette_address
+    _, plane = plaquette_address
     if plaquette_address in lattice.plaquettes.keys():
-        active_links, control_links, plaquette_site_coordinates, unique_links = lattice.plaquettes[plaquette_address]
+        _, _, plaquette_site_coordinates, _ = lattice.plaquettes[plaquette_address]
         sites_with_half_links = tuple(
             tuple(sorted(lattice.sites[site_coordinate], key=lambda x: lattice.FORDER.index(x)))
             for site_coordinate in plaquette_site_coordinates)
