@@ -90,9 +90,14 @@ def test_compute_plaquette_key_error_on_bad_plaquette_address():
 
         
 def test_compute_plaquette_signature():
+
+    # Test cases includes a strict option because for d=3 and for larger lattices,
+    # it is tedious to write out every single possible plaquette. Suffices
+    # To spot check different "kinds" of plaquettes (like corners, edges, interiors).
     test_cases = {
         "d=3/2": {
             "2 plaquettes, PBCs": {
+                "strict_test": True,
                 "lattice": LatticeDef(
                     num_sites=(2, 2, 1),
                     PBCs=(True, False, False),
@@ -114,6 +119,7 @@ def test_compute_plaquette_signature():
                 }
             },
             "3 plaquettes, OBCs": {  # 4 sites needed along 1 dir since OBCs
+                "strict_test": True,
                 "lattice": LatticeDef(
                     num_sites=(4, 2, 1),
                     PBCs=(False, False, False),
@@ -143,6 +149,7 @@ def test_compute_plaquette_signature():
         },
         "d=2": {
             "4 plaquettes, PBCs": {
+                "strict_test": True,
                 "lattice": LatticeDef(
                     num_sites=(2, 2, 1),
                     PBCs=(True, True, False),
@@ -170,6 +177,7 @@ def test_compute_plaquette_signature():
                 }
             },
             "9 plaquettes, mixed BCs": {  # 4 sites needed along 1 dir since OBCs; 3 along 2 dir since PBCs
+                "strict_test": True,
                 "lattice": LatticeDef(
                     num_sites=(4, 3, 1),
                     PBCs=(False, True, False),
@@ -219,6 +227,88 @@ def test_compute_plaquette_signature():
                     ((3, 2, 0), (1, 2)): ((1, 2), ()),
                 },
             },
+        },
+        "d=3": {
+            "6 plaquettes, OBCs": { # i.e. the faces of a single cube
+                "strict_test": True,
+                "lattice": LatticeDef(
+                    num_sites=(2, 2, 2),
+                    PBCs=(False, False, False),
+                    FORDER=[1, 2, 3, -1, -2, -3],
+                ),
+                "expected_signatures": {
+                    ((0, 0, 0), (1, 2)): ( # bottom
+                        (1, 2),
+                        ((1, 2, 3), (2, 3, -1), (3, -1, -2), (1, 3, -2)),
+                    ),
+                    ((0, 0, 0), (1, 3)): ( # front
+                        (1, 3),
+                        ((1, 2, 3), (2, 3, -1), (2, -1, -3), (1, 2, -3))
+                    ),
+                    ((0, 0, 0), (2, 3)): ( # left side
+                        (2, 3),
+                        ((1, 2, 3), (1, 3, -2), (1, -2, -3), (1, 2, -3))
+                    ),
+                    ((1, 0, 0), (2, 3)): ( # right side
+                        (2, 3),
+                        ((2, 3, -1), (3, -1, -2), (-1, -2, -3), (2, -1, -3))
+                    ),
+                    ((0, 1, 0), (1, 3)): ( # back
+                        (1, 3),
+                        ((1, 3, -2), (3, -1, -2), (-1, -2, -3), (1, -2, -3))
+                    ),
+                    ((0, 0, 1), (1, 2)): ( # top
+                        (1, 2),
+                        ((1, 2, -3), (2, -1, -3), (-1, -2, -3), (1, -2, -3))
+                    )
+                },
+                "expected_empty_signatures": { # three coordinates have two empties (appeared in 'expected'), three coordinates have three empties (no appearance in 'expected')
+                    ((1, 0, 0), (1, 2)): ((1, 2), ()),
+                    ((1, 0, 0), (1, 3)): ((1, 3), ()),
+                    ((0, 1, 0), (1, 2)): ((1, 2), ()),
+                    ((0, 1, 0), (2, 3)): ((2, 3), ()),
+                    ((0, 0, 1), (1, 3)): ((1, 3), ()),
+                    ((0, 0, 1), (2, 3)): ((2, 3), ()),
+                    ((0, 1, 1), (1, 2)): ((1, 2), ()),
+                    ((0, 1, 1), (1, 3)): ((1, 3), ()),
+                    ((0, 1, 1), (2, 3)): ((2, 3), ()),
+                    ((1, 0, 1), (1, 2)): ((1, 2), ()),
+                    ((1, 0, 1), (1, 3)): ((1, 3), ()),
+                    ((1, 0, 1), (2, 3)): ((2, 3), ()),
+                    ((1, 1, 1), (1, 2)): ((1, 2), ()),
+                    ((1, 1, 1), (1, 3)): ((1, 3), ()),
+                    ((1, 1, 1), (2, 3)): ((2, 3), ()),
+                }
+            },
+            "3x3x3, mixed BCs": {  # Many plaquettes, just spot checking a few
+                "strict_test": False,
+                "lattice": LatticeDef(
+                    num_sites=(4, 3, 3),
+                    PBCs=(False, True, True),
+                    FORDER=[1, 2, 3, -1, -2, -3],
+                ),
+                "expected_signatures": {
+                    ((0, 0, 0), (1, 2)): ( # 1 dir "edge"
+                        (1, 2),
+                        ((1, 2, 3, -2, -3), (1, 2, 3, -1, -2, -3), (1, 2, 3, -1, -2, -3), (1, 2, 3, -2, -3))
+                    ),
+                    ((0, 0, 0), (1, 3)): ( # 1 dir "edge"
+                        (1, 3),
+                        ((1, 2, 3, -2, -3), (1, 2, 3, -1, -2, -3), (1, 2, 3, -1, -2, -3), (1, 2, 3, -2, -3))
+                    ),
+                    ((0, 0, 0), (2, 3)): ( # 1 dir "face"
+                        (2, 3),
+                        ((1, 2, 3, -2, -3), (1, 2, 3, -2, -3), (1, 2, 3, -2, -3), (1, 2, 3, -2, -3))
+                    ),
+                    ((1, 1, 1), (1, 3)): ( # interior
+                        (1, 3),
+                        ((1, 2, 3, -1, -2, -3), (1, 2, 3, -1, -2, -3), (1, 2, 3, -1, -2, -3), (1, 2, 3, -1, -2, -3))
+                    ),
+                },
+                "expected_empty_signatures": {
+                    ((3, 0, 0), (1, 2)): ((1, 2), ()), # Far 1 dir edge of lattice, can't form (1, 2) plaquette there.
+                },
+            },
         }
     }
    
@@ -229,6 +319,11 @@ def test_compute_plaquette_signature():
                 computed_signatures[plaquette_address] = compute_plaquette_signature(
                     plaquette_address=plaquette_address, lattice=current_test_data["lattice"]
                 )
-            assert computed_signatures == current_test_data["expected_signatures"], f"{dim_str}, {lattice_str} yielded unexpected signatures.\nExpected: {current_test_data['expected_signatures']}\nEncountered: {computed_signatures}"
+            if current_test_data['strict_test'] is True:
+                assert computed_signatures == current_test_data["expected_signatures"], f"{dim_str}, {lattice_str} (strict test) yielded unexpected signatures.\nExpected: {current_test_data['expected_signatures']}\nEncountered: {computed_signatures}"
+            else:
+                for expected_plaquette_address, expected_plaquette_signature in current_test_data["expected_signatures"].items():
+                    current_site = expected_plaquette_address[0]
+                    assert computed_signatures[expected_plaquette_address] == expected_plaquette_signature, f"{dim_str}, {lattice_str} (non-strict test) yielded unexpected signature at site {current_site}.\nExpected: {expected_plaquette_signature}\nEncountered: {computed_signatures[expected_plaquette_address]}"
             for impossible_plaquette_address, empty_signature_result in current_test_data['expected_empty_signatures'].items():
                 assert compute_plaquette_signature(impossible_plaquette_address, current_test_data['lattice']) == empty_signature_result
