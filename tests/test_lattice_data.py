@@ -78,8 +78,19 @@ def test_lattice_def_site_exists_value_error():
         lattice.site_exists(site=(1, 1, 1, 1))
 
 
+def test_compute_plaquette_key_error_on_bad_plaquette_address():
+    lattice = LatticeDef(num_sites=(2, 2, 1), PBCs=[True, False, False], FORDER=FORDER)
+    plaquette_address_bad_site = ((3, 0, 0), (1, 2))
+    plaquette_address_bad_plane = ((0, 0, 0), (1, 3))
+    
+    with pytest.raises(KeyError) as e_info:
+        compute_plaquette_signature(plaquette_address_bad_site, lattice)
+    with pytest.raises(KeyError) as e_info:
+        compute_plaquette_signature(plaquette_address_bad_plane, lattice)
+
+        
 def test_compute_plaquette_signature():
-    test_cases: dict[str, dict[str, dict[str, LatticeDef | dict[PlaquetteAddress, PlaquetteSignature]]]] = {
+    test_cases = {
         "d=3/2": {
             "2 plaquettes, PBCs": {
                 "lattice": LatticeDef(
@@ -102,7 +113,7 @@ def test_compute_plaquette_signature():
                     ((1, 1, 0), (1, 2)): ((1, 2), ()),
                 }
             },
-            "3 plaquettes, OBCs": {  # four sites needed along 1 dir since OBCs
+            "3 plaquettes, OBCs": {  # 4 sites needed along 1 dir since OBCs
                 "lattice": LatticeDef(
                     num_sites=(4, 2, 1),
                     PBCs=(False, False, False),
@@ -127,6 +138,85 @@ def test_compute_plaquette_signature():
                     ((1, 1, 0), (1, 2)): ((1, 2), ()),
                     ((2, 1, 0), (1, 2)): ((1, 2), ()),
                     ((3, 1, 0), (1, 2)): ((1, 2), ()),
+                },
+            },
+        },
+        "d=2": {
+            "4 plaquettes, PBCs": {
+                "lattice": LatticeDef(
+                    num_sites=(2, 2, 1),
+                    PBCs=(True, True, False),
+                    FORDER=[1, 2, 3, -1, -2, -3],
+                ),
+                "expected_signatures": {
+                    ((0, 0, 0), (1, 2)): (
+                        (1, 2),
+                        ((1, 2, -1, -2), (1, 2, -1, -2), (1, 2, -1, -2), (1, 2, -1, -2)),
+                    ),
+                    ((1, 0, 0), (1, 2)): (
+                        (1, 2),
+                        ((1, 2, -1, -2), (1, 2, -1, -2), (1, 2, -1, -2), (1, 2, -1, -2))
+                    ),
+                    ((0, 1, 0), (1, 2)): (
+                        (1, 2),
+                        ((1, 2, -1, -2), (1, 2, -1, -2), (1, 2, -1, -2), (1, 2, -1, -2))
+                    ),
+                    ((1, 1, 0), (1, 2)): (
+                        (1, 2),
+                        ((1, 2, -1, -2), (1, 2, -1, -2), (1, 2, -1, -2), (1, 2, -1, -2))
+                    ),
+                },
+                "expected_empty_signatures": {
+                }
+            },
+            "9 plaquettes, mixed BCs": {  # 4 sites needed along 1 dir since OBCs; 3 along 2 dir since PBCs
+                "lattice": LatticeDef(
+                    num_sites=(4, 3, 1),
+                    PBCs=(False, True, False),
+                    FORDER=[-1, -2, -3, 1, 2, 3],
+                ),
+                "expected_signatures": {
+                    ((0, 0, 0), (1, 2)): (
+                        (1, 2),
+                        ((-2, 1, 2), (-1, -2, 1, 2), (-1, -2, 1, 2), (-2, 1, 2)),
+                    ),
+                    ((1, 0, 0), (1, 2)): (
+                        (1, 2),
+                        ((-1, -2, 1, 2), (-1, -2, 1, 2), (-1, -2, 1, 2), (-1, -2, 1, 2)),
+                    ),
+                    ((2, 0, 0), (1, 2)): (
+                        (1, 2),
+                        ((-1, -2, 1, 2), (-1, -2, 2), (-1, -2, 2), (-1, -2, 1, 2)),
+                    ),
+                    ((0, 1, 0), (1, 2)): (
+                        (1, 2),
+                        ((-2, 1, 2), (-1, -2, 1, 2), (-1, -2, 1, 2), (-2, 1, 2))
+                    ),
+                    ((1, 1, 0), (1, 2)): (
+                        (1, 2),
+                        ((-1, -2, 1, 2), (-1, -2, 1, 2), (-1, -2, 1, 2), (-1, -2, 1, 2)),
+                    ),
+                    ((2, 1, 0), (1, 2)): (
+                        (1, 2),
+                        ((-1, -2, 1, 2), (-1, -2, 2), (-1, -2, 2), (-1, -2, 1, 2)),
+                    ),
+                    ((0, 2, 0), (1, 2)): (
+                        (1, 2),
+                        ((-2, 1, 2), (-1, -2, 1, 2), (-1, -2, 1, 2), (-2, 1, 2)),
+                    ),
+                    ((1, 2, 0), (1, 2)): (
+                        (1, 2),
+                        ((-1, -2, 1, 2), (-1, -2, 1, 2), (-1, -2, 1, 2), (-1, -2, 1, 2)),
+                    ),
+                    ((2, 2, 0), (1, 2)): (
+                        (1, 2),
+                        ((-1, -2, 1, 2), (-1, -2, 2), (-1, -2, 2), (-1, -2, 1, 2)),
+                    ),
+                },
+                "expected_empty_signatures": {
+                    ((3, 0, 0), (1, 2)): ((1, 2), ()),
+                    ((3, 1, 0), (1, 2)): ((1, 2), ()),
+                    ((3, 2, 0), (1, 2)): ((1, 2), ()),
                 },
             },
         }

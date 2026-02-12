@@ -577,7 +577,10 @@ def compute_plaquette_signature(
     will have an empty tuple as its second element (which otherwise gives half-link data per site). This can
     occur when requesting a plaquette signature on the boundaries of a non-periodic lattice direction.
     """
-    _, plane = plaquette_address
+    site_coordinate, plane = plaquette_address
+    if (site_coordinate not in lattice.sites) or (plane not in lattice.planes):
+        raise KeyError(f"Plaquette address {plaquette_address} not found in lattice {lattice}.")
+    
     if plaquette_address in lattice.plaquettes.keys():
         _, _, plaquette_site_coordinates, _ = lattice.plaquettes[plaquette_address]
         sites_with_half_links = tuple(
