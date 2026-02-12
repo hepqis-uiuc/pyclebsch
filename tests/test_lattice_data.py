@@ -1,10 +1,13 @@
 import pytest
 from pyclebsch.matrix_elements.lattice_data import (
     LatticeDef,
+    LinkDirection,
+    PlaquetteAddress,
+    PlaquetteSignature,
     compute_plaquette_signature,
 )
 
-FORDER=[1, 2, 3, -1, -2, -3]
+FORDER: list[LinkDirection] = [1, 2, 3, -1, -2, -3]
 
 
 def test_lattice_def_planes():
@@ -76,36 +79,66 @@ def test_lattice_def_site_exists_value_error():
 
 
 def test_compute_plaquette_signature():
-    # test_cases = {
-    #     "d=3/2": [
-    #     LatticeDef(num_sites=(2, 2, 1), PBCs=(True, False, False)),
-    #     LatticeDef(num_sites=(3, 2, 1), PBCs=(True, False, False)),
-    #     LatticeDef(num_sites=(4, 2, 1), PBCs=(True, False, False)),
-    #     LatticeDef(num_sites=(5, 2, 1), PBCs=(True, False, False))
-    #     ],
-    #     "d=2"
-    # }
-    lattice = LatticeDef(num_sites=(2, 2, 1), PBCs=(True, False, False), FORDER=[1, -1, 2, -2, 3, -3])
-    computed_signatures = {}
-    expected_signatures = {
-        ((0, 0, 0), (1, 2)): (
-            (1, 2),
-            ((1, -1, 2), (1, -1, 2), (1, -1, -2), (1, -1, -2)),
-        ),
-        ((1, 0, 0), (1, 2)): (
-            (1, 2),
-            ((1, -1, 2), (1, -1, 2), (1, -1, -2), (1, -1, -2)),
-        ),
-        ((0, 1, 0), (1, 2)): ((1, 2), ()),
-        ((1, 1, 0), (1, 2)): ((1, 2), ()),
+    test_cases: dict[str, dict[str, dict[str, LatticeDef | dict[PlaquetteAddress, PlaquetteSignature]]]] = {
+        "d=3/2": {
+            "2 plaquettes, PBCs": {
+                "lattice": LatticeDef(
+                    num_sites=(2, 2, 1),
+                    PBCs=(True, False, False),
+                    FORDER=[1, -1, 2, -2, 3, -3],
+                ),
+                "expected_signatures": {
+                    ((0, 0, 0), (1, 2)): (
+                        (1, 2),
+                        ((1, -1, 2), (1, -1, 2), (1, -1, -2), (1, -1, -2)),
+                    ),
+                    ((1, 0, 0), (1, 2)): (
+                        (1, 2),
+                        ((1, -1, 2), (1, -1, 2), (1, -1, -2), (1, -1, -2)),
+                    )
+                },
+                "expected_empty_signatures": {
+                    ((0, 1, 0), (1, 2)): ((1, 2), ()),
+                    ((1, 1, 0), (1, 2)): ((1, 2), ()),
+                }
+            },
+            "3 plaquettes, OBCs": {  # four sites needed along 1 dir since OBCs
+                "lattice": LatticeDef(
+                    num_sites=(4, 2, 1),
+                    PBCs=(False, False, False),
+                    FORDER=[-1, 3, 2, -2, 1, -3],
+                ),
+                "expected_signatures": {
+                    ((0, 0, 0), (1, 2)): (
+                        (1, 2),
+                        ((2, 1), (-1, 2, 1), (-1, -2, 1), (-2, 1)),
+                    ),
+                    ((1, 0, 0), (1, 2)): (
+                        (1, 2),
+                        ((-1, 2, 1), (-1, 2, 1), (-1, -2, 1), (-1, -2, 1)),
+                    ),
+                    ((2, 0, 0), (1, 2)): (
+                        (1, 2),
+                        ((-1, 2, 1), (-1, 2), (-1, -2), (-1, -2, 1)),
+                    )},
+                "expected_empty_signatures": {
+                    ((3, 0, 0), (1, 2)): ((1, 2), ()),
+                    ((0, 1, 0), (1, 2)): ((1, 2), ()),
+                    ((1, 1, 0), (1, 2)): ((1, 2), ()),
+                    ((2, 1, 0), (1, 2)): ((1, 2), ()),
+                    ((3, 1, 0), (1, 2)): ((1, 2), ()),
+                },
+            },
+        }
     }
-    impossible_plaquette_addresses = [((0, 1, 0), (1, 2)), ((1, 1, 0), (1, 2))] # These vertices are on the edge of the lattice, so no plaquette can be formed.
-    for plaquette_address in list(lattice.plaquettes.keys()) + impossible_plaquette_addresses:
-        computed_signatures[plaquette_address] = compute_plaquette_signature(
-            plaquette_address=plaquette_address, lattice=lattice
-        )
-
-    breakpoint()
-    assert computed_signatures.keys() == expected_signatures.keys()
-    for plaquette_address, expected_signature in expected_signatures.items():
-        assert computed_signatures[plaquette_address] == expected_signature
+   
+    for dim_str, lattices in test_cases.items():
+        for lattice_str, current_test_data in lattices.items():
+            computed_signatures = {}
+            for plaquette_address in list(current_test_data["lattice"].plaquettes.keys()):
+                computed_signatures[plaquette_address] = compute_plaquette_signature(
+                    plaquette_address=plaquette_address, lattice=current_test_data["lattice"]
+                )
+            assert computed_signatures == current_test_data["expected_signatures"], f"{dim_str}, {lattice_str} yielded unexpected signatures.\nExpected: {current_test_data['expected_signatures']}\nEncountered: {computed_signatures}"
+            for impossible_plaquette_address, empty_signature_result in current_test_data['expected_empty_signatures'].items():
+                assert compute_plaquette_signature(impossible_plaquette_address, current_test_data['lattice']) == empty_signature_result
