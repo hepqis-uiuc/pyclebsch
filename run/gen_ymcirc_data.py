@@ -74,6 +74,9 @@ if __name__ == "__main__":
     # Note that when saving to disk, plane tuples will be saved
     # as string literals since JSON doesn't preserve this type
     # info otherwise.
+    # NOTE: Only site coordinates where distinct lattice signatures
+    # can occur need to be provided when specifying a lattice case.
+    # For fully periodic lattices, that means only the origin is needed.
     FORDER = [1, 2, 3, -1, -2, -3]
     EPS = 1e-10
     N_colors = 3
@@ -86,6 +89,7 @@ if __name__ == "__main__":
             "PBCs": [True, False, False],
             "cutoff": 1,
             "merge_close_mat_elems": True,
+            "site_coords_for_comp": [(0, 0, 0)],
             "file_path_state_data": work_dir / "T1_dim(3_2)_plaquette_states.json.gz",
             "file_path_mat_elem_data": work_dir
             / "T1_dim(3_2)_magnetic_hamiltonian.json.gz",
@@ -97,6 +101,7 @@ if __name__ == "__main__":
             "PBCs": [True, False, False],
             "cutoff": 2,
             "merge_close_mat_elems": True,
+            "site_coords_for_comp": [(0, 0, 0)],
             "file_path_state_data": work_dir / "T2_dim(3_2)_plaquette_states.json.gz",
             "file_path_mat_elem_data": work_dir
             / "T2_dim(3_2)_magnetic_hamiltonian.json.gz",
@@ -108,6 +113,7 @@ if __name__ == "__main__":
             "PBCs": [True, True, False],
             "cutoff": 1,
             "merge_close_mat_elems": True,
+            "site_coords_for_comp": [(0, 0, 0)],
             "file_path_state_data": work_dir / "T1_dim(2)_plaquette_states.json.gz",
             "file_path_mat_elem_data": work_dir
             / "T1_dim(2)_magnetic_hamiltonian.json.gz",
@@ -119,6 +125,12 @@ if __name__ == "__main__":
             "PBCs": [False, False, False],
             "cutoff": 1,
             "merge_close_mat_elems": True,
+            "site_coords_for_comp": [
+                (0, 0, 0),      # bottom, front, left side
+                (1, 0, 0),      # right side
+                (0, 1, 0),      # back
+                (1, 1, 1)       # top
+            ],
             "file_path_state_data": work_dir / "T1_dim(3)_OBC_plaquette_states.json.gz",
             "file_path_mat_elem_data": work_dir
             / "T1_dim(3)_OBC_magnetic_hamiltonian.json.gz",
@@ -130,6 +142,7 @@ if __name__ == "__main__":
         #     "PBCs": [True, True, True],
         #     "cutoff": 1,
         #     "merge_close_mat_elems": True,
+        #     "site_coords_for_comp": [(0, 0, 0)],
         #     "file_path_state_data": work_dir / "T1_dim(3)_cube_PBC_plaquette_states.json.gz",
         #     "file_path_mat_elem_data": work_dir / "T1_dim(3)_cube_PBC_magnetic_hamiltonian.json.gz"
         # },
@@ -156,7 +169,6 @@ if __name__ == "__main__":
         truncation_irreps, singlets, conj_dict = irreps_and_singlets(
             N_colors, sites, lattice_case["truncation_mode"], lattice_case["cutoff"]
         )
-        lattice_origin = (0, 0, 0)
 
         metadata_dict = {
             "dim": lattice_case["dim"],
@@ -165,6 +177,7 @@ if __name__ == "__main__":
             "PBCs": lattice_case["PBCs"],
             "cutoff": lattice_case["cutoff"],
             "planes": list(map(str, lattice.planes)),
+            "site_coords_for_comp": lattice_case["site_coords_for_comp"],
             "close_mat_elems_merged": lattice_case["merge_close_mat_elems"],
             "f_order": FORDER,
         }
@@ -175,15 +188,16 @@ if __name__ == "__main__":
             # Compute plaquette states for each plane, and aggregate.
             plaq_states = []
             for current_plane in tqdm(lattice.planes, desc="Plane iteration"):
-                plaquette_address = (lattice_origin, current_plane)
-                plaq_states_current_plane = []
-                for plaq_state in tqdm(physical_plaquette_states(
-                        plaquette_address, sites, plaquettes, singlets, FORDER
-                    ), desc="Plaquette state iteration"):
-                    plaq_states_current_plane += [str(plaq_state_pyclebsch_to_ymcirc_format(plaq_state))]
-                    if check_mat_elems_against_plaquette_states is True:
-                        plaquette_states_in_plaquette_state_data += (plaq_state_pyclebsch_to_ymcirc_format(plaq_state),)
-                plaq_states += plaq_states_current_plane
+                for site_coordinate in tqdm(lattice_case["site_coords_for_comp"], desc="Site coordinate"):
+                    plaquette_address = (site_coordinate, current_plane)
+                    plaq_states_current_plane = []
+                    for plaq_state in tqdm(physical_plaquette_states(
+                            plaquette_address, sites, plaquettes, singlets, FORDER
+                        ), desc="Plaquette state iteration"):
+                        plaq_states_current_plane += [str(plaq_state_pyclebsch_to_ymcirc_format(plaq_state))]
+                        if check_mat_elems_against_plaquette_states is True:
+                            plaquette_states_in_plaquette_state_data += (plaq_state_pyclebsch_to_ymcirc_format(plaq_state),)
+                    plaq_states += plaq_states_current_plane
 
             # Remove duplicates from the list of plaquette states.
             plaq_states = list(set(plaq_states))
@@ -201,46 +215,47 @@ if __name__ == "__main__":
             # NOTE: this key hierarchy will be "rolled up" as much as
             # possible if the option "merge_close_mat_elems" is True.
             for current_plane in tqdm(lattice.planes, desc="Plane iteration"):
-                plaquette_address = (lattice_origin, current_plane)
-                _, plaquette_site_half_links = compute_plaquette_signature(plaquette_address, lattice)
-                mat_elems_current_plane = calc_plaquette_elements(
-                    N_colors,
-                    plaquette_address,
-                    sites,
-                    plaquettes,
-                    truncation_irreps,
-                    singlets,
-                    conj_dict,
-                    FORDER,
-                    EPS,
-                    PRES,
-                    parallelize,
-                )
-                for (Pf, Pi), mat_elem_value in tqdm(mat_elems_current_plane.items(), desc="Mat elem iteration"):
-                    # Construct the state transition key.
-                    Pf_ymcirc_format = plaq_state_pyclebsch_to_ymcirc_format(Pf)
-                    Pi_ymcirc_format = plaq_state_pyclebsch_to_ymcirc_format(Pi)
-                    Pf_Pi_key = (Pf_ymcirc_format, Pi_ymcirc_format)
-                    
-                    if check_mat_elems_against_plaquette_states is True:
-                        if Pf_ymcirc_format not in plaquette_states_in_mat_elem_data:
-                            plaquette_states_in_mat_elem_data.append(Pf_ymcirc_format)
-                        if Pi not in plaquette_states_in_mat_elem_data:
-                            plaquette_states_in_mat_elem_data.append(Pi_ymcirc_format)
-                    
-                    
-                    # Ensure hierarchical key structure exists before setting matrix element value.
-                    # NOTE: Keys cast as strings to preserve tuple type when saved as JSON.
-                    Pf_Pi_key_str = str(Pf_Pi_key)
-                    current_plane_str = str(current_plane)
-                    plaquette_site_half_links_str = str(plaquette_site_half_links)
-                    if Pf_Pi_key_str not in mat_elem_result_dict["data"].keys():
-                        mat_elem_result_dict["data"][Pf_Pi_key_str] = {}
-                    if current_plane not in mat_elem_result_dict["data"][Pf_Pi_key_str]:
-                        mat_elem_result_dict["data"][Pf_Pi_key_str][current_plane_str] = {}
+                for site_coordinate in tqdm(lattice_case["site_coords_for_comp"], desc="Site coordinate"):
+                    plaquette_address = (site_coordinate, current_plane)
+                    _, plaquette_site_half_links = compute_plaquette_signature(plaquette_address, lattice)
+                    mat_elems_current_plane = calc_plaquette_elements(
+                        N_colors,
+                        plaquette_address,
+                        sites,
+                        plaquettes,
+                        truncation_irreps,
+                        singlets,
+                        conj_dict,
+                        FORDER,
+                        EPS,
+                        PRES,
+                        parallelize,
+                    )
+                    for (Pf, Pi), mat_elem_value in tqdm(mat_elems_current_plane.items(), desc="Mat elem iteration"):
+                        # Construct the state transition key.
+                        Pf_ymcirc_format = plaq_state_pyclebsch_to_ymcirc_format(Pf)
+                        Pi_ymcirc_format = plaq_state_pyclebsch_to_ymcirc_format(Pi)
+                        Pf_Pi_key = (Pf_ymcirc_format, Pi_ymcirc_format)
 
-                    # Set the matrix element value.
-                    mat_elem_result_dict["data"][Pf_Pi_key_str][current_plane_str][plaquette_site_half_links_str] = mat_elem_value
+                        if check_mat_elems_against_plaquette_states is True:
+                            if Pf_ymcirc_format not in plaquette_states_in_mat_elem_data:
+                                plaquette_states_in_mat_elem_data.append(Pf_ymcirc_format)
+                            if Pi not in plaquette_states_in_mat_elem_data:
+                                plaquette_states_in_mat_elem_data.append(Pi_ymcirc_format)
+
+
+                        # Ensure hierarchical key structure exists before setting matrix element value.
+                        # NOTE: Keys cast as strings to preserve tuple type when saved as JSON.
+                        Pf_Pi_key_str = str(Pf_Pi_key)
+                        current_plane_str = str(current_plane)
+                        plaquette_site_half_links_str = str(plaquette_site_half_links)
+                        if Pf_Pi_key_str not in mat_elem_result_dict["data"].keys():
+                            mat_elem_result_dict["data"][Pf_Pi_key_str] = {}
+                        if current_plane not in mat_elem_result_dict["data"][Pf_Pi_key_str]:
+                            mat_elem_result_dict["data"][Pf_Pi_key_str][current_plane_str] = {}
+
+                        # Set the matrix element value.
+                        mat_elem_result_dict["data"][Pf_Pi_key_str][current_plane_str][plaquette_site_half_links_str] = mat_elem_value
 
             # Now see how much merging we can do. If all the matrix elements
             # at a lowest level of the key hierarchy are identical, remove that
