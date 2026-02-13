@@ -265,6 +265,8 @@ if __name__ == "__main__":
         # Sanity check before doing file writes.
         # There should be no state labels on the matrix elements
         # that don't appear in the set of all physical plaquette states.
+        # Subset check instead of equality check because vanishing matrix
+        # elements not included in data file.
         if check_mat_elems_against_plaquette_states is True:
             print("Checking that state labels are consistent between files...")
             assert len(plaq_states_result_dict["data"]) == len(set(plaq_states_result_dict["data"]))
