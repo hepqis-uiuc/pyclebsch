@@ -8,10 +8,10 @@ This codebase is currently at an 'alpha' stage of development. Breaking changes 
 ## Installation
 This project uses [uv](https://docs.astral.sh/uv/getting-started/) for environment (packages, Python version) management. Ensure that you have uv installed (instructions for various operating systems available at the previously linked-to docs).
 
-Once you have uv installed, use it to execute project scripts, and the correct virtual environment will automatically be used. For example:
+Once you have uv installed, use it to execute project scripts (collected in the `run` directory), and the correct virtual environment will automatically be used. For example:
 
 ``` shell
-uv run run.py
+uv run -m run.demo
 ```
 There is no need to manually activate or deactivate the virtual environment. Information about the virtual environment is documented in `pyproject.toml`, and can be viewed by running
 ```shell
@@ -54,5 +54,50 @@ uv lock
 uv sync
 ```
 
+## Tests
+The project uses [pytest](https://docs.pytest.org/en/stable/).
+There are also numerous useful [how-to](https://docs.pytest.org/en/stable/how-to/index.html#how-to) guides available.
+
+### Writing new tests
+When adding new tests, group the functionality being tested by file. For example, if you were writing tests for a class or function in a module named `pyclebsch.some_module` or `run.some_module`, then all tests for this class should go in a file `tests/test_some_module.py`.
+
+Note that all test files must be named `test_[something].py`!
+
+### Running tests
+If you want to run all tests in the `test` directory, activate the virtual environment and then type:
+```
+uv run -m pytest -v
+```
+The `-v` flag is optional and simply outputs additional debug info. Another useful flag is `-s`, which enables displaying all print statements generated while tests are running.
+
+If you want to run all tests in a specific file:
+```
+uv run -m pytest tests/test_[file].py
+```
+
+If you want to run *just one* test:
+```
+uv run -m pytest tests/test_mod.py::test_func.
+```
+
+There's also more complete documentation on [how to invoke pytest](https://docs.pytest.org/en/stable/how-to/usage.html) which presents some additional features.
+
+### Slow tests
+Tests which take a long time to run can be skipped by default. To do this, use the following decorator:
+```
+@pytest.mark.slow
+def test_this_is_some_slow_test():
+    [test logic here]
+```
+
+`conftest.py` is set up so that any test marked this way will be skipped by default. To include slow tests in a test run:
+```
+uv run -m pytest --runslow
+```
+
 ## Usage
-There is a small script called run.py which demonstrates standard usage of some of the functionality of this package. We plan on adding more documentation in the future.
+Various scripts which make use of the functionality in `pyclebsch` are gathered in the `run` directory. To execute any of them run (for example):
+```shell
+uv run -m run.demo
+```
+If the script `run/some_script.py` exists, then replace `demo` with `some_script` to execute it instead. Additional scripts can be added this way.

@@ -2,16 +2,180 @@
 LATTICE DATA
 """
 
+from dataclasses import dataclass
+from typing import Literal
+
 import numpy as np
 from tqdm import tqdm
 from .helpers import *
 from ..cgc import calc_cgcs
 from collections import defaultdict
-from ..su_n_operators import find_direct_sum
+from ..su_n_operators import find_direct_sum, IrrepWeight
 from more_itertools import distinct_permutations
 from itertools import product, combinations_with_replacement
 
-def sites_links_and_plaquettes(num_sites, PBCs, FORDER):
+type SiteMultiplicityIndex = int
+type SiteControlLinks = tuple[IrrepWeight, ...]
+type ActiveLink = IrrepWeight
+type PlaquetteState = tuple[
+    ActiveLink,
+    ActiveLink,
+    ActiveLink,
+    ActiveLink,
+    SiteControlLinks,
+    SiteControlLinks,
+    SiteControlLinks,
+    SiteControlLinks,
+    SiteMultiplicityIndex,
+    SiteMultiplicityIndex,
+    SiteMultiplicityIndex,
+    SiteMultiplicityIndex,
+]
+type SiteCoordinate = tuple[int, int] | tuple[int, int, int]
+type LinkDirection = Literal[1, 2, 3, -1, -2, -3]
+type Plane = tuple[LinkDirection, LinkDirection]
+type SiteHalfLinks = list[LinkDirection]
+type LinkAddress = tuple[SiteCoordinate, LinkDirection]
+type PlaquetteActiveLinkAddresses = tuple[LinkAddress, LinkAddress, LinkAddress, LinkAddress]
+type PlaquetteControlLinkAddresses = tuple[list[LinkAddress], list[LinkAddress], list[LinkAddress], list[LinkAddress]]
+type PlaquetteSiteCoordinates = tuple[SiteCoordinate, SiteCoordinate, SiteCoordinate, SiteCoordinate]
+type PlaquetteUniqueControls = tuple[list[int], list[int], list[int], list[int]]
+type PlaquetteAddress = tuple[SiteCoordinate, Plane]
+type PlaquetteSignature = tuple[
+    Plane, tuple[SiteHalfLinks, SiteHalfLinks, SiteHalfLinks, SiteHalfLinks] | tuple[()]
+] # TODO make a class to enforce forder?
+
+
+@dataclass
+class LatticeDef:
+    """Class for defining the geometry of a lattice."""
+
+    num_sites: tuple[int, int, int]
+    PBCs: tuple[bool, bool, bool]
+    FORDER: tuple[LinkDirection, LinkDirection, LinkDirection, LinkDirection, LinkDirection, LinkDirection] | list[LinkDirection]
+
+    @property
+    def planes(self) -> tuple[Plane] | tuple[Plane, Plane, Plane]:
+        if hasattr(self, "_lattice_planes"):
+            return self._lattice_planes
+        if any(self.num_sites) < 1:
+            raise ValueError(
+                f"Malformed lattice encountered while attempting to compute plane. num_sites should consist of positive integers but encountered the tuple '{self.num_sites}'."
+            )
+        possible_planes = [(1, 2), (1, 3), (2, 3)]
+        self._lattice_planes = tuple(filter(self._plane_exists, possible_planes))
+
+        return self._lattice_planes
+
+    @property
+    def sites(self) -> dict[SiteCoordinate, SiteHalfLinks]:
+        """
+        The F-ordered half-links connected to a given lattice site.
+        """
+        if not hasattr(self, "_sites"):
+            self._sites, self._links, self._plaquettes = sites_links_and_plaquettes(self.num_sites, self.PBCs, self.FORDER)
+        return self._sites
+
+    @property
+    def links(self) -> dict[LinkAddress, tuple[SiteCoordinate, SiteCoordinate]]:
+        """
+        The start and stop site coordinates associated with links in the lattice.
+        """
+        if not hasattr(self, "_links"):
+            self._sites, self._links, self._plaquettes = sites_links_and_plaquettes(self.num_sites, self.PBCs, self.FORDER)
+        return self._links
+
+    @property
+    def plaquettes(self) -> dict[
+            PlaquetteAddress, tuple[
+                PlaquetteActiveLinkAddresses,
+                PlaquetteControlLinkAddresses,
+                PlaquetteSiteCoordinates,
+                PlaquetteUniqueControls]]:
+        """
+        Four-tuples of active links, control links, site coordinates, and unique controls for plaquettes.
+
+        - Active links go CCW in the plaquette plane starting from the "bottom-left" site.
+        - Control links are presented as a length-4 list of F-ordered non-active links
+          attached to each site, following the "CCW from bottom-left site" ordering convention.
+        - Sites are the lattice coordinates of each site in the plaquette, also CCW-ordered.
+        - Unique controls is a list of indices for the controls in each corresponding site,
+          with later duplicates filtered out. This allows for determination of the set of
+          actual physical links which are controls without overcounting. For example, if
+          the control link at index zero on the first site is also a control for the second
+          site, then the first element of the unique controls list will contain the index '0',
+          and the index in the second element of unique controls which corresponds to that
+          physical link will be omitted.
+        """
+        if not hasattr(self, "_plaquettes"):
+            self._sites, self._links, self._plaquettes = sites_links_and_plaquettes(self.num_sites, self.PBCs, self.FORDER)
+        return self._plaquettes
+
+    def site_exists(self, site: SiteCoordinate, periodic_ok: bool = True) -> bool:
+        """
+        Check whether site exists on the lattice.
+
+        If periodic_ok is True, then (for any periodic directions) the lattice coordinate
+        is wrapped around before checking for site existence (i.e. any int is allowed).
+        For nonperiodic directions, this is NOT done (the allowed range is between zero
+        and the corresponding entry in num_sites minus 1).
+        """
+        if len(site) != 3:
+            raise ValueError(f"Lattice site '{site}' should be a 3-tuple of ints.")
+        for idx, current_dir_max in enumerate(self.num_sites):
+            if not isinstance(site[idx], int):
+                raise ValueError(f"Lattice site '{site}' should be a 3-tuple of ints.")
+            current_dir_is_periodic_and_periodic_ok = self.PBCs[idx] and periodic_ok
+            site_is_between_zero_and_current_dir_max = (site[idx] >= 0) and (site[idx] < current_dir_max)
+            current_dir_in_range = True if current_dir_is_periodic_and_periodic_ok is True else site_is_between_zero_and_current_dir_max
+            if current_dir_in_range is False:
+                return False
+
+        return True
+            
+
+    def _plane_exists(self, plane: Plane) -> bool:
+        """Check if plane can be formed on the lattice."""
+        # Switch to using zero-indexed plane info.
+        dir_1, dir_2 = sorted(plane)
+        dir_1_zero_indexed = abs(dir_1) - 1
+        dir_2_zero_indexed = abs(dir_2) - 1
+
+        # Boolean tests to establish existence.
+        lattice_plane_large_enough_despite_boundary_conds = (
+            self.num_sites[dir_1_zero_indexed] >= 2
+            and self.num_sites[dir_2_zero_indexed] >= 2
+        )
+        lattice_plane_has_one_large_direction_and_one_small_periodic_direction = (
+            self.num_sites[dir_1_zero_indexed] >= 2
+            and self.num_sites[dir_2_zero_indexed] == 1
+            and (self.PBCs[dir_2_zero_indexed] is True)
+        ) or (
+            self.num_sites[dir_1_zero_indexed] == 1
+            and self.num_sites[dir_2_zero_indexed] >= 2
+            and (self.PBCs[dir_1_zero_indexed] is True)
+        )
+        lattice_plane_has_two_small_but_periodic_directions = (
+            self.num_sites[dir_1_zero_indexed] == 1
+            and self.num_sites[dir_2_zero_indexed] == 1
+            and (self.PBCs[dir_1_zero_indexed] is True)
+            and (self.PBCs[dir_2_zero_indexed] is True)
+        )
+        if (
+            lattice_plane_large_enough_despite_boundary_conds
+            or lattice_plane_has_one_large_direction_and_one_small_periodic_direction
+            or lattice_plane_has_two_small_but_periodic_directions
+        ):
+            return True
+        else:
+            return False
+        
+
+def sites_links_and_plaquettes(num_sites: tuple[int, int, int] | list[int], PBCs: tuple[bool, bool, bool] | list[bool], FORDER) -> tuple[
+        dict[SiteCoordinate, SiteHalfLinks],
+        dict[LinkAddress, tuple[SiteCoordinate, SiteCoordinate]],
+        dict[PlaquetteAddress, tuple[PlaquetteActiveLinkAddresses, PlaquetteControlLinkAddresses, PlaquetteSiteCoordinates, PlaquetteUniqueControls]]
+]:
     """
     Sets up sites, links, and plaquettes of the cubic lattice.
     Sites are returned as a dictionary whose keys are site coordinates and whose
@@ -21,7 +185,10 @@ def sites_links_and_plaquettes(num_sites, PBCs, FORDER):
     Plaquettes are returned as keys of a dictionary with values of the form
     [ [plaquette links], [lists of control links], [plaquette sites],
     [unique control links] ]. Unique control links are identified by whether
-    they appear multiple times due to periodic boundary conditions.
+    they appear multiple times due to periodic boundary conditions (i.e. the
+    list of unique control links is a list counting how many times each
+    link in the list of controls appears; if an element is zero, then
+    that means the corresponding control link is unique).
     """
 
     # Check inputs.
@@ -51,7 +218,7 @@ def sites_links_and_plaquettes(num_sites, PBCs, FORDER):
     # Links are labeled by a tuple (lattice coordinate, positive lattice direction).
     # Using lengths and PBCs, each lattice link is found, and, in the process,
     # the directions of half-links connected to each site are appended. Values
-    # of the dictionary links are [starting site, ending site].
+    # of the dictionary links are (starting site, ending site).
     links = {}
     for s in sites:
         for i in range(3):
@@ -65,7 +232,7 @@ def sites_links_and_plaquettes(num_sites, PBCs, FORDER):
                     s_i[i] += 1
                 s_i = tuple(s_i)
                 sites[s].append(i+1), sites[s_i].append(-(i+1))
-                links[(s, i+1)] = [s,s_i]
+                links[(s, i+1)] = tuple([s,s_i])
     
     # Plaquette links and sites are labeled as
     # s4 -- l3 -- s3
@@ -129,7 +296,7 @@ def sites_links_and_plaquettes(num_sites, PBCs, FORDER):
                                 if all(C not in clist for clist in ctrl_links): uniques.append(count)
                                 count += 1
                         ctrl_links.append(clinks), unique_ctrls.append(uniques)
-                    plaquettes[(s1, (i+1,j+1))] = [[l1,l2,l3,l4]] + [ctrl_links] + [[s1,s2,s3,s4]] + [unique_ctrls]
+                    plaquettes[(s1, (i+1,j+1))] = [tuple([l1,l2,l3,l4])] + [tuple(ctrl_links)] + [tuple([s1,s2,s3,s4])] + [tuple(unique_ctrls)]
 
     return sites, links, plaquettes
 
@@ -207,7 +374,7 @@ def irreps_and_singlets(N, sites, truncation_mode, cutoff):
 
     return link_irreps, site_singlets, conj_dict
 
-def physical_plaquette_states(P, sites, plaquettes, singlets, FORDER):
+def physical_plaquette_states(P, sites, plaquettes, singlets, FORDER) -> list[PlaquetteState]:
     """
     Generates a list of physical plaquette states for a plaquette P. P is a
     tuple (site coordinate, lattice plane), such as ((0,0,0), (1,2)). The states
@@ -390,3 +557,37 @@ def physical_plaquette_states(P, sites, plaquettes, singlets, FORDER):
     del s4
 
     return states
+
+def compute_plaquette_signature(
+        plaquette_address: PlaquetteAddress, lattice: LatticeDef
+) -> PlaquetteSignature:
+    """
+    Obtain the 'signature' associated with the plaquette defined by plaquette_address.
+
+    The argument plaquette_address is a 2-tuple whose first element is a site coordinate,
+    and whose second element is a plane (defined as a 2-tuple of sorted, positive link directions).
+    In the given plane, the site coordinate is the "bottom-left" vertex of the plaquette.
+
+    A plaquette's signature captures the notion of whether a plaquette is on the edge, interior, or corner
+    of a lattice. This is relevant because that information (along with plane and FORDER) are necessary to
+    unambiguously compute matrix elements of Wilson loops. As a convenience, the half links at each site
+    appearing in the signature are sorted according to the value of the FORDER property on lattice.
+
+    If it is not possible to form a plaquette in the requested plane, then the returned PlaquetteSignature
+    will have an empty tuple as its second element (which otherwise gives half-link data per site). This can
+    occur when requesting a plaquette signature on the boundaries of a non-periodic lattice direction.
+    """
+    site_coordinate, plane = plaquette_address
+    if (site_coordinate not in lattice.sites) or (plane not in lattice.planes):
+        raise KeyError(f"Plaquette address {plaquette_address} not found in lattice {lattice}.")
+    
+    if plaquette_address in lattice.plaquettes.keys():
+        _, _, plaquette_site_coordinates, _ = lattice.plaquettes[plaquette_address]
+        sites_with_half_links = tuple(
+            tuple(sorted(lattice.sites[site_coordinate], key=lambda x: lattice.FORDER.index(x)))
+            for site_coordinate in plaquette_site_coordinates)
+    else:
+        sites_with_half_links = () # Plaquette doesn't exist, return empty tuple.
+
+    signature = (plane, sites_with_half_links)
+    return signature

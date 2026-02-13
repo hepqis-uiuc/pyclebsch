@@ -5,12 +5,15 @@ from itertools import product, combinations
 from collections import Counter, defaultdict
 from functools import reduce
 from more_itertools import locate
+from typing import Optional
 
 from pyclebsch.symmetric_group.plethysm_utils import _Adams, _class_character, _class_order
 from pyclebsch.symmetric_group.tableaux import find_partitions
 
 
-def calc_dimension(iweight: tuple) -> int:
+type IrrepWeight = tuple[int, int, ...] # Length N corresponds to SU(N) iweight.
+
+def calc_dimension(iweight: IrrepWeight) -> int:
     """Returns dimension of an irrep.
     ~Eq. (22)
     """
@@ -54,7 +57,7 @@ def calc_weight(gt_pattern: list[list], kind: str) -> list:
     else:
         raise ValueError('Invalid weight kind.')
 
-def find_gt_patterns(iweight: tuple) -> list[list[list]]:
+def find_gt_patterns(iweight: IrrepWeight) -> list[list[list]]:
     """Creates all GT-patterns for an irrep.
     ~Eqs. (20)-(21)
     """
@@ -140,7 +143,7 @@ def ladder_op(gt_patterns: list[list[list]], k: int, kind: str) -> list:
     return linear_combination
 
 
-def find_suN_basis(iweight: tuple) -> list[csr_array]:
+def find_suN_basis(iweight: IrrepWeight) -> list[csr_array]:
     """Returns a basis for an irrep of su(N).
     The basis matrices are returned as orthogonal sparse arrays,
     normalized to 0.5 in the fundamental representation.
@@ -226,7 +229,7 @@ def find_suN_basis(iweight: tuple) -> list[csr_array]:
     return basis
 
 
-def find_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> dict[tuple, int]:
+def find_direct_sum(product_iweights: list[IrrepWeight], sum_iweight: Optional[IrrepWeight]=None) -> dict[tuple, int]:
     """Decomposes a direct product of irreps (product_iweights) into a
     direct sum of irreps. Returns a dictionary whose keys are the irreps
     appearing in the direct sum, and whose values are the multiplicities of
@@ -327,7 +330,7 @@ def find_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> d
         return direct_sum
 
 
-def find_symmetry_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> tuple[dict, list]:
+def find_symmetry_direct_sum(product_iweights: list[IrrepWeight], sum_iweight: Optional[IrrepWeight]=None) -> tuple[dict, list]:
     """Decomposes a direct product of irreps (product_iweights) into a
     direct sum of irreps and provides the symmetry group irreps they
     transform under. Returns a dictionary of the direct sum and a list
@@ -403,7 +406,7 @@ def find_symmetry_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=N
     return direct_sum, indices
 
 
-def find_plethysms(iweight: tuple, n: int) -> dict[tuple, dict[tuple, int]]:
+def find_plethysms(iweight: IrrepWeight, n: int) -> dict[tuple, dict[tuple, int]]:
     """Decomposes a direct product of n factors of an irrep (iweight)
     into a direct sum of irreps. The decomposition is returned as a dictionary
     whose keys are the direct-sum irreps, and whose values are dictionaries
