@@ -187,13 +187,15 @@ if __name__ == "__main__":
             plaq_states_result_dict = {"data": [], "metadata": metadata_dict}
             # Compute plaquette states for each plane, and aggregate.
             plaq_states = []
-            for current_plane in tqdm(lattice.planes, desc="Plane iteration"):
-                for site_coordinate in tqdm(lattice_case["site_coords_for_comp"], desc="Site coordinate"):
+            for current_plane in tqdm(lattice.planes, desc="Plane iteration for plaq states data"):
+                for site_coordinate in tqdm(lattice_case["site_coords_for_comp"], desc=f"Site iteration for plaq states data, plane={current_plane}"):
                     plaquette_address = (site_coordinate, current_plane)
+                    if plaquette_address not in lattice.plaquettes.keys():
+                        continue # Skip plaquette addresses that don't actually exist.
                     plaq_states_current_plane = []
                     for plaq_state in tqdm(physical_plaquette_states(
                             plaquette_address, sites, plaquettes, singlets, FORDER
-                        ), desc="Plaquette state iteration"):
+                        ), desc=f"Enumerate plaquette states at address {plaquette_address}"):
                         plaq_states_current_plane += [str(plaq_state_pyclebsch_to_ymcirc_format(plaq_state))]
                         if check_mat_elems_against_plaquette_states is True:
                             plaquette_states_in_plaquette_state_data += (plaq_state_pyclebsch_to_ymcirc_format(plaq_state),)
@@ -214,9 +216,11 @@ if __name__ == "__main__":
             # <Pf|Pi> -> plane -> site half links
             # NOTE: this key hierarchy will be "rolled up" as much as
             # possible if the option "merge_close_mat_elems" is True.
-            for current_plane in tqdm(lattice.planes, desc="Plane iteration"):
-                for site_coordinate in tqdm(lattice_case["site_coords_for_comp"], desc="Site coordinate"):
+            for current_plane in tqdm(lattice.planes, desc="Plane iteration for mat elem data"):
+                for site_coordinate in tqdm(lattice_case["site_coords_for_comp"], desc=f"Site iteration for mat elem data, plane={current_plane}"):
                     plaquette_address = (site_coordinate, current_plane)
+                    if plaquette_address not in lattice.plaquettes.keys():
+                        continue # Skip plaquette addresses that don't actually exist.
                     _, plaquette_site_half_links = compute_plaquette_signature(plaquette_address, lattice)
                     mat_elems_current_plane = calc_plaquette_elements(
                         N_colors,
@@ -231,7 +235,7 @@ if __name__ == "__main__":
                         PRES,
                         parallelize,
                     )
-                    for (Pf, Pi), mat_elem_value in tqdm(mat_elems_current_plane.items(), desc="Mat elem iteration"):
+                    for (Pf, Pi), mat_elem_value in tqdm(mat_elems_current_plane.items(), desc=f"Enumerate mat elems at plaquette address {plaquette_address}"):
                         # Construct the state transition key.
                         Pf_ymcirc_format = plaq_state_pyclebsch_to_ymcirc_format(Pf)
                         Pi_ymcirc_format = plaq_state_pyclebsch_to_ymcirc_format(Pi)
