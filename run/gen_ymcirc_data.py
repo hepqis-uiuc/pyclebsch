@@ -11,6 +11,8 @@ the list lattice_cases below.
 See su_n_wilson_loop.py for more detailed
 information about various script options.
 """
+import copy
+from tqdm import tqdm
 
 import gzip
 import json
@@ -25,7 +27,8 @@ from pyclebsch.matrix_elements.lattice_data import (
     SiteMultiplicityIndex,
     irreps_and_singlets,
     physical_plaquette_states,
-    sites_links_and_plaquettes,
+    sites_links_and_plaquettes, LatticeDef,
+    compute_plaquette_signature
 )
 from pyclebsch.matrix_elements.plaquette_matrix_elements import calc_plaquette_elements
 
@@ -63,6 +66,7 @@ if __name__ == "__main__":
     # Filesystem stuff
     output_mat_elem_json = True
     output_plaquette_states_json = True
+    check_mat_elems_against_plaquette_states = True # Run some validation before writing files.
     work_dir = Path("./out")
     work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -81,7 +85,7 @@ if __name__ == "__main__":
             "num_sites": [3, 2, 1],
             "PBCs": [True, False, False],
             "cutoff": 1,
-            "planes": [(1, 2)],
+            "merge_close_mat_elems": True,
             "file_path_state_data": work_dir / "T1_dim(3_2)_plaquette_states.json.gz",
             "file_path_mat_elem_data": work_dir
             / "T1_dim(3_2)_magnetic_hamiltonian.json.gz",
@@ -92,7 +96,7 @@ if __name__ == "__main__":
             "num_sites": [3, 2, 1],
             "PBCs": [True, False, False],
             "cutoff": 2,
-            "planes": [(1, 2)],
+            "merge_close_mat_elems": True,
             "file_path_state_data": work_dir / "T2_dim(3_2)_plaquette_states.json.gz",
             "file_path_mat_elem_data": work_dir
             / "T2_dim(3_2)_magnetic_hamiltonian.json.gz",
@@ -103,7 +107,7 @@ if __name__ == "__main__":
             "num_sites": [3, 3, 1],
             "PBCs": [True, True, False],
             "cutoff": 1,
-            "planes": [(1, 2)],
+            "merge_close_mat_elems": True,
             "file_path_state_data": work_dir / "T1_dim(2)_plaquette_states.json.gz",
             "file_path_mat_elem_data": work_dir
             / "T1_dim(2)_magnetic_hamiltonian.json.gz",
@@ -114,7 +118,7 @@ if __name__ == "__main__":
             "num_sites": [3, 3, 3],
             "PBCs": [False, False, False],
             "cutoff": 1,
-            "planes": [(1, 2), (2, 3), (1, 3)],
+            "merge_close_mat_elems": True,
             "file_path_state_data": work_dir / "T1_dim(3)_OBC_plaquette_states.json.gz",
             "file_path_mat_elem_data": work_dir
             / "T1_dim(3)_OBC_magnetic_hamiltonian.json.gz",
@@ -125,7 +129,7 @@ if __name__ == "__main__":
         #     "num_sites": [2, 2, 2],
         #     "PBCs": [True, True, True],
         #     "cutoff": 1,
-        #     "planes": [(1, 2), (2, 3), (1, 3)],
+        #     "merge_close_mat_elems": True,
         #     "file_path_state_data": work_dir / "T1_dim(3)_cube_PBC_plaquette_states.json.gz",
         #     "file_path_mat_elem_data": work_dir / "T1_dim(3)_cube_PBC_magnetic_hamiltonian.json.gz"
         # },
@@ -136,11 +140,16 @@ if __name__ == "__main__":
     # Note: tuple data are converted to string types to prevent the JSON file
     # writes from failing.
     for lattice_case in lattice_cases:
-        num_sites = lattice_case["num_sites"]
-        PBCs = lattice_case["PBCs"]
+        # Initial config for current lattice case.
+        if check_mat_elems_against_plaquette_states is True:
+            plaquette_states_in_mat_elem_data = []
+            plaquette_states_in_plaquette_state_data = []
+        lattice = LatticeDef(lattice_case["num_sites"], lattice_case["PBCs"], FORDER)
         truncation_mode = lattice_case["truncation_mode"]
         cutoff = lattice_case["cutoff"]
+        print(f"Current lattice: {lattice}")
 
+        # Compute information needed to obtain plaquette states.
         sites, links, plaquettes = sites_links_and_plaquettes(
             lattice_case["num_sites"], lattice_case["PBCs"], FORDER
         )
@@ -155,47 +164,48 @@ if __name__ == "__main__":
             "num_sites": lattice_case["num_sites"],
             "PBCs": lattice_case["PBCs"],
             "cutoff": lattice_case["cutoff"],
-            "planes": list(map(str, lattice_case["planes"])),  # type: ignore
+            "planes": list(map(str, lattice.planes)),
+            "close_mat_elems_merged": lattice_case["merge_close_mat_elems"],
             "f_order": FORDER,
         }
 
         if output_plaquette_states_json is True:
-            print(f"Generating {lattice_case['file_path_state_data']}")
+            print(f"Generating data for {lattice_case['file_path_state_data']}")
             plaq_states_result_dict = {"data": [], "metadata": metadata_dict}
             # Compute plaquette states for each plane, and aggregate.
             plaq_states = []
-            for current_plane in lattice_case["planes"]:  # type: ignore
-                plaq_site_plane = (lattice_origin, current_plane)
-                plaq_states_current_plane = [
-                    str(plaq_state_pyclebsch_to_ymcirc_format(plaq_state))
-                    for plaq_state in physical_plaquette_states(
-                        plaq_site_plane, sites, plaquettes, singlets, FORDER
-                    )
-                ]
+            for current_plane in tqdm(lattice.planes, desc="Plane iteration"):
+                plaquette_address = (lattice_origin, current_plane)
+                plaq_states_current_plane = []
+                for plaq_state in tqdm(physical_plaquette_states(
+                        plaquette_address, sites, plaquettes, singlets, FORDER
+                    ), desc="Plaquette state iteration"):
+                    plaq_states_current_plane += [str(plaq_state_pyclebsch_to_ymcirc_format(plaq_state))]
+                    if check_mat_elems_against_plaquette_states is True:
+                        plaquette_states_in_plaquette_state_data += (plaq_state_pyclebsch_to_ymcirc_format(plaq_state),)
                 plaq_states += plaq_states_current_plane
 
             # Remove duplicates from the list of plaquette states.
             plaq_states = list(set(plaq_states))
 
-            # Construct json file
+            # Construct data for JSON file
             plaq_states_result_dict["data"] = plaq_states
 
-            # save to disk
-            with gzip.open(
-                lattice_case["file_path_state_data"], "wt", encoding="utf-8"
-            ) as f:
-                json.dump(plaq_states_result_dict, f)
 
         if output_mat_elem_json is True:
-            print(f"Generating {lattice_case['file_path_mat_elem_data']}")
+            print(f"Generating data for {lattice_case['file_path_mat_elem_data']}")
             mat_elem_result_dict = {"data": {}, "metadata": metadata_dict}
-            # Compute matrix elements for each plane
-            mat_elems_by_plane = {}
-            for current_plane in lattice_case["planes"]:  # type: ignore
-                plaq_site_plane = (lattice_origin, current_plane)
-                mat_elems_by_plane[current_plane] = calc_plaquette_elements(
+            # Iterate over planes, compute all mat elems in that plane, then
+            # store in nested dicts with following key hierarchy:
+            # <Pf|Pi> -> plane -> site half links
+            # NOTE: this key hierarchy will be "rolled up" as much as
+            # possible if the option "merge_close_mat_elems" is True.
+            for current_plane in tqdm(lattice.planes, desc="Plane iteration"):
+                plaquette_address = (lattice_origin, current_plane)
+                _, plaquette_site_half_links = compute_plaquette_signature(plaquette_address, lattice)
+                mat_elems_current_plane = calc_plaquette_elements(
                     N_colors,
-                    plaq_site_plane,
+                    plaquette_address,
                     sites,
                     plaquettes,
                     truncation_irreps,
@@ -206,40 +216,71 @@ if __name__ == "__main__":
                     PRES,
                     parallelize,
                 )
+                for (Pf, Pi), mat_elem_value in tqdm(mat_elems_current_plane.items(), desc="Mat elem iteration"):
+                    # Construct the state transition key.
+                    Pf_ymcirc_format = plaq_state_pyclebsch_to_ymcirc_format(Pf)
+                    Pi_ymcirc_format = plaq_state_pyclebsch_to_ymcirc_format(Pi)
+                    Pf_Pi_key = (Pf_ymcirc_format, Pi_ymcirc_format)
+                    
+                    if check_mat_elems_against_plaquette_states is True:
+                        if Pf_ymcirc_format not in plaquette_states_in_mat_elem_data:
+                            plaquette_states_in_mat_elem_data.append(Pf_ymcirc_format)
+                        if Pi not in plaquette_states_in_mat_elem_data:
+                            plaquette_states_in_mat_elem_data.append(Pi_ymcirc_format)
+                    
+                    
+                    # Ensure hierarchical key structure exists before setting matrix element value.
+                    # NOTE: Keys cast as strings to preserve tuple type when saved as JSON.
+                    Pf_Pi_key_str = str(Pf_Pi_key)
+                    current_plane_str = str(current_plane)
+                    plaquette_site_half_links_str = str(plaquette_site_half_links)
+                    if Pf_Pi_key_str not in mat_elem_result_dict["data"].keys():
+                        mat_elem_result_dict["data"][Pf_Pi_key_str] = {}
+                    if current_plane not in mat_elem_result_dict["data"][Pf_Pi_key_str]:
+                        mat_elem_result_dict["data"][Pf_Pi_key_str][current_plane_str] = {}
 
-            # Merge into single dict
-            mat_elems_merged = {}
-            for current_plane, mat_elem_data in mat_elems_by_plane.items():
-                for (Pf, Pi), mat_elem_val in mat_elem_data.items():
-                    mat_elems_merged.setdefault((Pf, Pi), {})[current_plane] = (
-                        mat_elem_val
-                    )
+                    # Set the matrix element value.
+                    mat_elem_result_dict["data"][Pf_Pi_key_str][current_plane_str][plaquette_site_half_links_str] = mat_elem_value
 
-            # Collapse plane info if a matrix element has the same value in all planes
-            mat_elems_collapsed = {}
-            for (Pf, Pi), plane_to_val_map in mat_elems_merged.items():
-                Pf_ymcirc_format = plaq_state_pyclebsch_to_ymcirc_format(Pf)
-                Pi_ymcirc_format = plaq_state_pyclebsch_to_ymcirc_format(Pi)
-                current_mat_elem_key_as_str = str(
-                    (Pf_ymcirc_format, Pi_ymcirc_format)
-                )  # For later JSON encoding
-                values = list(plane_to_val_map.values())
-                if np.allclose(values, values[0]) is True:
-                    mat_elems_collapsed[current_mat_elem_key_as_str] = np.mean(values)
-                else:
-                    plane_to_val_map_keys_as_strings = {
-                        str(current_plane): mat_elem_val
-                        for current_plane, mat_elem_val in plane_to_val_map.items()
-                    }  # For later JSON encoding
-                    mat_elems_collapsed[current_mat_elem_key_as_str] = (
-                        plane_to_val_map_keys_as_strings
-                    )
+            # Now see how much merging we can do. If all the matrix elements
+            # at a lowest level of the key hierarchy are identical, remove that
+            # level in the key hierarchy.
+            if lattice_case["merge_close_mat_elems"] is True:
+                mat_elem_data_merged_if_possible = copy.deepcopy(mat_elem_result_dict["data"])
+                for Pf_Pi_key, mat_elems_Pf_Pi in tqdm(mat_elem_result_dict["data"].items(), desc="Attempting to merge mat elems"):
+                    mat_elem_data_merged_if_possible[Pf_Pi_key] = {}
+                    for current_plane, mat_elems_Pf_Pi_current_plane in mat_elems_Pf_Pi.items():
+                        mat_elem_values = list(mat_elems_Pf_Pi_current_plane.values())
+                        if np.allclose(mat_elem_values, mat_elem_values[0]) is True:
+                            mat_elem_data_merged_if_possible[Pf_Pi_key][current_plane] = mat_elem_values[0]
+                    all_signatures_merged_current_plane = all(isinstance(val, float) or isinstance(val, int) for val in mat_elem_data_merged_if_possible[Pf_Pi_key].values())
+                    if all_signatures_merged_current_plane is True:
+                        mat_elem_values = list(mat_elem_data_merged_if_possible[Pf_Pi_key].values())
+                        if np.allclose(mat_elem_values, mat_elem_values[0]):
+                            mat_elem_data_merged_if_possible[Pf_Pi_key] = mat_elem_values[0]
 
-            # Construct json file
-            mat_elem_result_dict["data"] = mat_elems_collapsed
+                mat_elem_result_dict["data"] = mat_elem_data_merged_if_possible
 
-            # save to disk
-            with gzip.open(
-                lattice_case["file_path_mat_elem_data"], "wt", encoding="utf-8"
-            ) as f:
-                json.dump(mat_elem_result_dict, f)
+
+        # Sanity check before doing file writes.
+        # There should be no state labels on the matrix elements
+        # that don't appear in the set of all physical plaquette states.
+        if check_mat_elems_against_plaquette_states is True:
+            print("Checking that state labels are consistent between files...")
+            assert len(plaq_states_result_dict["data"]) == len(set(plaq_states_result_dict["data"]))
+            plaquette_states_in_mat_elem_data = set(plaquette_states_in_mat_elem_data)
+            plaquette_states_in_plaquette_state_data = set(plaquette_states_in_plaquette_state_data)
+            assert plaquette_states_in_mat_elem_data.issubset(plaquette_states_in_plaquette_state_data)
+            print("Done.\n")
+
+        # save plaquette states data to disk
+        with gzip.open(
+            lattice_case["file_path_state_data"], "wt", encoding="utf-8"
+        ) as f:
+            json.dump(plaq_states_result_dict, f)
+
+        # save matrix element data to disk
+        with gzip.open(
+            lattice_case["file_path_mat_elem_data"], "wt", encoding="utf-8"
+        ) as f:
+            json.dump(mat_elem_result_dict, f)
