@@ -119,9 +119,9 @@ if __name__ == "__main__":
             / "T1_dim(2)_magnetic_hamiltonian.json.gz",
         },
         {
-            "dim": "d=3",
+            "dim": "d=3",       # This case is a single "cube" of links.
             "truncation_mode": "T",
-            "num_sites": [3, 3, 3],
+            "num_sites": [2, 2, 2],
             "PBCs": [False, False, False],
             "cutoff": 1,
             "merge_close_mat_elems": True,
