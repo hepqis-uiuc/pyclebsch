@@ -8,7 +8,7 @@ user_invocable: true
 
 ## 1. Package Overview
 
-**pyclebsch** computes SU(N) Clebsch-Gordan coefficients (CGCs) and lattice gauge theory Hamiltonian data. The `feature/ymcirc_gen_json_scripts` branch generates JSON files consumable by ymcirc.
+**pyclebsch** computes SU(N) Clebsch-Gordan coefficients (CGCs) and lattice gauge theory Hamiltonian data.
 
 **Location**: `~/claude/pyclebsch-test/` (cloned from `hepqis-uiuc/pyclebsch`)
 
@@ -264,8 +264,6 @@ FORDER defines the ordering of half-links at each site. It is a permutation of `
 
 Default: `FORDER = [1, 2, 3, -1, -2, -3]`
 
-> **ymcirc divergence**: Current ymcirc has no explicit FORDER parameter. Refactoring should introduce FORDER to make half-link ordering configurable and explicit.
-
 ### Plaquette Geometry
 
 ```
@@ -464,8 +462,6 @@ Key hierarchy: `(Pf, Pi) → plane → site_half_links → float_value`.
 All keys are stringified tuples (JSON doesn't preserve Python tuple types).
 
 **Merging**: When `merge_close_mat_elems=True`, identical values across signatures within a plane are collapsed (inner dict replaced by float). If additionally identical across planes, the plane dict is also collapsed to a single float. Uses `np.allclose`.
-
-> **ymcirc divergence**: Current ymcirc hardcodes Hamiltonian data. Refactoring should make it ingest these JSON files, parsing the stringified tuple keys back into native types.
 
 ---
 

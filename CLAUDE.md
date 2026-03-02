@@ -7,7 +7,6 @@ SU(N) Clebsch-Gordan coefficient computation library with lattice gauge theory a
 - **Language**: Python 3.14+
 - **Package manager**: uv
 - **Test framework**: pytest
-- **Branch**: `feature/ymcirc_gen_json_scripts`
 
 ## Commands
 
