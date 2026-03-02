@@ -88,7 +88,6 @@ if __name__ == "__main__":
             "num_sites": [3, 2, 1],
             "PBCs": [True, False, False],
             "cutoff": 1,
-            "merge_close_mat_elems": True,
             "site_coords_for_comp": [(0, 0, 0)],
             "file_path_state_data": work_dir / "T1_dim(3_2)_plaquette_states.json.gz",
             "file_path_mat_elem_data": work_dir
@@ -100,7 +99,6 @@ if __name__ == "__main__":
             "num_sites": [3, 2, 1],
             "PBCs": [True, False, False],
             "cutoff": 2,
-            "merge_close_mat_elems": True,
             "site_coords_for_comp": [(0, 0, 0)],
             "file_path_state_data": work_dir / "T2_dim(3_2)_plaquette_states.json.gz",
             "file_path_mat_elem_data": work_dir
@@ -112,36 +110,34 @@ if __name__ == "__main__":
             "num_sites": [3, 3, 1],
             "PBCs": [True, True, False],
             "cutoff": 1,
-            "merge_close_mat_elems": True,
             "site_coords_for_comp": [(0, 0, 0)],
             "file_path_state_data": work_dir / "T1_dim(2)_plaquette_states.json.gz",
             "file_path_mat_elem_data": work_dir
             / "T1_dim(2)_magnetic_hamiltonian.json.gz",
         },
-        {
-            "dim": "d=3",       # This case is a single "cube" of links.
-            "truncation_mode": "T",
-            "num_sites": [2, 2, 2],
-            "PBCs": [False, False, False],
-            "cutoff": 1,
-            "merge_close_mat_elems": True,
-            "site_coords_for_comp": [
-                (0, 0, 0),      # bottom, front, left side
-                (1, 0, 0),      # right side
-                (0, 1, 0),      # back
-                (1, 1, 1)       # top
-            ],
-            "file_path_state_data": work_dir / "T1_dim(3)_OBC_plaquette_states.json.gz",
-            "file_path_mat_elem_data": work_dir
-            / "T1_dim(3)_OBC_magnetic_hamiltonian.json.gz",
-        },
+        # {
+        #     "dim": "d=3",       # This case is a single "cube" of links.
+        #     "truncation_mode": "T",
+        #     "num_sites": [2, 2, 2],
+        #     "PBCs": [False, False, False],
+        #     "cutoff": 1,
+        #     "site_coords_for_comp": [
+        #         (0, 0, 0),      # bottom, front, left side
+        #         (1, 0, 0),      # right side
+        #         (0, 1, 0),      # back
+        #         (1, 1, 1)       # top
+        #     ],
+        #     "file_path_state_data": work_dir / "T1_dim(3)_OBC_plaquette_states.json.gz",
+        #     "file_path_mat_elem_data": work_dir
+        #     / "T1_dim(3)_OBC_magnetic_hamiltonian.json.gz",
+        # }
+        #,
         # {
         #     "dim": "d=3",
         #     "truncation_mode": "T",
         #     "num_sites": [2, 2, 2],
         #     "PBCs": [True, True, True],
         #     "cutoff": 1,
-        #     "merge_close_mat_elems": True,
         #     "site_coords_for_comp": [(0, 0, 0)],
         #     "file_path_state_data": work_dir / "T1_dim(3)_cube_PBC_plaquette_states.json.gz",
         #     "file_path_mat_elem_data": work_dir / "T1_dim(3)_cube_PBC_magnetic_hamiltonian.json.gz"
@@ -178,7 +174,6 @@ if __name__ == "__main__":
             "cutoff": lattice_case["cutoff"],
             "planes": list(map(str, lattice.planes)),
             "site_coords_for_comp": lattice_case["site_coords_for_comp"],
-            "close_mat_elems_merged": lattice_case["merge_close_mat_elems"],
             "f_order": FORDER,
         }
 
@@ -213,9 +208,7 @@ if __name__ == "__main__":
             mat_elem_result_dict = {"data": {}, "metadata": metadata_dict}
             # Iterate over planes, compute all mat elems in that plane, then
             # store in nested dicts with following key hierarchy:
-            # <Pf|Pi> -> plane -> site half links
-            # NOTE: this key hierarchy will be "rolled up" as much as
-            # possible if the option "merge_close_mat_elems" is True.
+            # <Pf|Pi> -> plane -> site half links.
             for current_plane in tqdm(lattice.planes, desc="Plane iteration for mat elem data"):
                 for site_coordinate in tqdm(lattice_case["site_coords_for_comp"], desc=f"Site iteration for mat elem data, plane={current_plane}"):
                     plaquette_address = (site_coordinate, current_plane)
@@ -260,26 +253,6 @@ if __name__ == "__main__":
 
                         # Set the matrix element value.
                         mat_elem_result_dict["data"][Pf_Pi_key_str][current_plane_str][plaquette_site_half_links_str] = mat_elem_value
-
-            # Now see how much merging we can do. If all the matrix elements
-            # at a lowest level of the key hierarchy are identical, remove that
-            # level in the key hierarchy.
-            if lattice_case["merge_close_mat_elems"] is True:
-                mat_elem_data_merged_if_possible = copy.deepcopy(mat_elem_result_dict["data"])
-                for Pf_Pi_key, mat_elems_Pf_Pi in tqdm(mat_elem_result_dict["data"].items(), desc="Attempting to merge mat elems"):
-                    mat_elem_data_merged_if_possible[Pf_Pi_key] = {}
-                    for current_plane, mat_elems_Pf_Pi_current_plane in mat_elems_Pf_Pi.items():
-                        mat_elem_values = list(mat_elems_Pf_Pi_current_plane.values())
-                        if np.allclose(mat_elem_values, mat_elem_values[0]) is True:
-                            mat_elem_data_merged_if_possible[Pf_Pi_key][current_plane] = mat_elem_values[0]
-                    all_signatures_merged_current_plane = all(isinstance(val, float) or isinstance(val, int) for val in mat_elem_data_merged_if_possible[Pf_Pi_key].values())
-                    if all_signatures_merged_current_plane is True:
-                        mat_elem_values = list(mat_elem_data_merged_if_possible[Pf_Pi_key].values())
-                        if np.allclose(mat_elem_values, mat_elem_values[0]):
-                            mat_elem_data_merged_if_possible[Pf_Pi_key] = mat_elem_values[0]
-
-                mat_elem_result_dict["data"] = mat_elem_data_merged_if_possible
-
 
         # Sanity check before doing file writes.
         # There should be no state labels on the matrix elements
