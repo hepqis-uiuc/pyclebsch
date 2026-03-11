@@ -135,13 +135,23 @@ if __name__ == "__main__":
         # {
         #     "dim": "d=3",
         #     "truncation_mode": "T",
-        #     "num_sites": [2, 2, 2],
+        #     "num_sites": [3, 3, 3],
         #     "PBCs": [True, True, True],
         #     "cutoff": 1,
         #     "site_coords_for_comp": [(0, 0, 0)],
         #     "file_path_state_data": work_dir / "T1_dim(3)_cube_PBC_plaquette_states.json.gz",
         #     "file_path_mat_elem_data": work_dir / "T1_dim(3)_cube_PBC_magnetic_hamiltonian.json.gz"
         # },
+        {
+            "dim": "d=3",
+            "truncation_mode": "B",
+            "num_sites": [3, 3, 3],
+            "PBCs": [True, True, True],
+            "cutoff": 3,
+            "site_coords_for_comp": [(0, 0, 0)],
+            "file_path_state_data": work_dir / "B3_dim(3)_cube_PBC_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B3_dim(3)_cube_PBC_magnetic_hamiltonian.json.gz"
+        },
     ]
     parallelize = True  # May cause EOFError. Rerun if this happens.
 
