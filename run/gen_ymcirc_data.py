@@ -81,7 +81,7 @@ if __name__ == "__main__":
     EPS = 1e-10
     N_colors = 3
     PRES = 10
-    lattice_cases = [
+    lattice_cases_T_truncations_PBC = [
         {
             "dim": "d=3/2",
             "truncation_mode": "T",
@@ -93,28 +93,28 @@ if __name__ == "__main__":
             "file_path_mat_elem_data": work_dir
             / "T1_dim(3_2)_magnetic_hamiltonian.json.gz",
         },
-        {
-            "dim": "d=3/2",
-            "truncation_mode": "T",
-            "num_sites": [3, 2, 1],
-            "PBCs": [True, False, False],
-            "cutoff": 2,
-            "site_coords_for_comp": [(0, 0, 0)],
-            "file_path_state_data": work_dir / "T2_dim(3_2)_plaquette_states.json.gz",
-            "file_path_mat_elem_data": work_dir
-            / "T2_dim(3_2)_magnetic_hamiltonian.json.gz",
-        },
-        {
-            "dim": "d=2",
-            "truncation_mode": "T",
-            "num_sites": [3, 3, 1],
-            "PBCs": [True, True, False],
-            "cutoff": 1,
-            "site_coords_for_comp": [(0, 0, 0)],
-            "file_path_state_data": work_dir / "T1_dim(2)_plaquette_states.json.gz",
-            "file_path_mat_elem_data": work_dir
-            / "T1_dim(2)_magnetic_hamiltonian.json.gz",
-        },
+        # {
+        #     "dim": "d=3/2",
+        #     "truncation_mode": "T",
+        #     "num_sites": [3, 2, 1],
+        #     "PBCs": [True, False, False],
+        #     "cutoff": 2,
+        #     "site_coords_for_comp": [(0, 0, 0)],
+        #     "file_path_state_data": work_dir / "T2_dim(3_2)_plaquette_states.json.gz",
+        #     "file_path_mat_elem_data": work_dir
+        #     / "T2_dim(3_2)_magnetic_hamiltonian.json.gz",
+        # },
+        # {
+        #     "dim": "d=2",
+        #     "truncation_mode": "T",
+        #     "num_sites": [3, 3, 1],
+        #     "PBCs": [True, True, False],
+        #     "cutoff": 1,
+        #     "site_coords_for_comp": [(0, 0, 0)],
+        #     "file_path_state_data": work_dir / "T1_dim(2)_plaquette_states.json.gz",
+        #     "file_path_mat_elem_data": work_dir
+        #     / "T1_dim(2)_magnetic_hamiltonian.json.gz",
+        # },
         # {
         #     "dim": "d=3",       # This case is a single "cube" of links.
         #     "truncation_mode": "T",
@@ -142,17 +142,160 @@ if __name__ == "__main__":
         #     "file_path_state_data": work_dir / "T1_dim(3)_cube_PBC_plaquette_states.json.gz",
         #     "file_path_mat_elem_data": work_dir / "T1_dim(3)_cube_PBC_magnetic_hamiltonian.json.gz"
         # },
+    ]
+    lattice_cases_B_truncations_PBC = [
+        {
+            "dim": "d=3/2",
+            "truncation_mode": "B",
+            "num_sites": [3, 2, 1],
+            "PBCs": [True, False, False],
+            "cutoff": 3,
+            "site_coords_for_comp": [(0, 0, 0)],
+            "file_path_state_data": work_dir / "B3_dim(3/2)_PBC_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B3_dim(3/2)_PBC_magnetic_hamiltonian.json.gz"
+        },
+        {
+            "dim": "d=3/2",
+            "truncation_mode": "B",
+            "num_sites": [3, 2, 1],
+            "PBCs": [True, False, False],
+            "cutoff": 5,
+            "site_coords_for_comp": [(0, 0, 0)],
+            "file_path_state_data": work_dir / "B5_dim(3/2)_PBC_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B5_dim(3/2)_PBC_magnetic_hamiltonian.json.gz"
+        },
+        {
+            "dim": "d=3/2",
+            "truncation_mode": "B",
+            "num_sites": [3, 2, 1],
+            "PBCs": [True, False, False],
+            "cutoff": 6,
+            "site_coords_for_comp": [(0, 0, 0)],
+            "file_path_state_data": work_dir / "B6_dim(3/2)_PBC_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B6_dim(3/2)_PBC_magnetic_hamiltonian.json.gz"
+        },
+        {
+            "dim": "d=3/2",
+            "truncation_mode": "B",
+            "num_sites": [3, 2, 1],
+            "PBCs": [True, False, False],
+            "cutoff": 7,
+            "site_coords_for_comp": [(0, 0, 0)],
+            "file_path_state_data": work_dir / "B7_dim(3/2)_PBC_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B7_dim(3/2)_PBC_magnetic_hamiltonian.json.gz"
+        },
+        {
+            "dim": "d=3/2",
+            "truncation_mode": "B",
+            "num_sites": [3, 2, 1],
+            "PBCs": [True, False, False],
+            "cutoff": 8,
+            "site_coords_for_comp": [(0, 0, 0)],
+            "file_path_state_data": work_dir / "B8_dim(3/2)_PBC_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B8_dim(3/2)_PBC_magnetic_hamiltonian.json.gz"
+        },
+        {
+            "dim": "d=3/2",
+            "truncation_mode": "B",
+            "num_sites": [3, 2, 1],
+            "PBCs": [True, False, False],
+            "cutoff": 9,
+            "site_coords_for_comp": [(0, 0, 0)],
+            "file_path_state_data": work_dir / "B9_dim(3/2)_PBC_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B9_dim(3/2)_PBC_magnetic_hamiltonian.json.gz"
+        },
+        {
+            "dim": "d=3/2",
+            "truncation_mode": "B",
+            "num_sites": [3, 2, 1],
+            "PBCs": [True, False, False],
+            "cutoff": 10,
+            "site_coords_for_comp": [(0, 0, 0)],
+            "file_path_state_data": work_dir / "B10_dim(3/2)_PBC_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B10_dim(3/2)_PBC_magnetic_hamiltonian.json.gz"
+        },
+        {
+            "dim": "d=2",
+            "truncation_mode": "B",
+            "num_sites": [3, 3, 1],
+            "PBCs": [True, True, False],
+            "cutoff": 3,
+            "site_coords_for_comp": [(0, 0, 0)],
+            "file_path_state_data": work_dir / "B3_dim(2)_PBC_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B3_dim(2)_PBC_magnetic_hamiltonian.json.gz"
+        },
+        {
+            "dim": "d=2",
+            "truncation_mode": "B",
+            "num_sites": [3, 3, 1],
+            "PBCs": [True, True, False],
+            "cutoff": 4,
+            "site_coords_for_comp": [(0, 0, 0)],
+            "file_path_state_data": work_dir / "B4_dim(2)_PBC_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B4_dim(2)_PBC_magnetic_hamiltonian.json.gz"
+        },
+        {
+            "dim": "d=2",
+            "truncation_mode": "B",
+            "num_sites": [3, 3, 1],
+            "PBCs": [True, True, False],
+            "cutoff": 7,
+            "site_coords_for_comp": [(0, 0, 0)],
+            "file_path_state_data": work_dir / "B7_dim(2)_PBC_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B7_dim(2)_PBC_magnetic_hamiltonian.json.gz"
+        },
+        {
+            "dim": "d=2",
+            "truncation_mode": "B",
+            "num_sites": [3, 3, 1],
+            "PBCs": [True, True, False],
+            "cutoff": 8,
+            "site_coords_for_comp": [(0, 0, 0)],
+            "file_path_state_data": work_dir / "B8_dim(2)_PBC_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B8_dim(2)_PBC_magnetic_hamiltonian.json.gz"
+        },
+        {
+            "dim": "d=2",
+            "truncation_mode": "B",
+            "num_sites": [3, 3, 1],
+            "PBCs": [True, True, False],
+            "cutoff": 9,
+            "site_coords_for_comp": [(0, 0, 0)],
+            "file_path_state_data": work_dir / "B9_dim(2)_PBC_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B9_dim(2)_PBC_magnetic_hamiltonian.json.gz"
+        },
+        {
+            "dim": "d=2",
+            "truncation_mode": "B",
+            "num_sites": [3, 3, 1],
+            "PBCs": [True, True, False],
+            "cutoff": 10,
+            "site_coords_for_comp": [(0, 0, 0)],
+            "file_path_state_data": work_dir / "B10_dim(2)_PBC_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B10_dim(2)_PBC_magnetic_hamiltonian.json.gz"
+        },
+        # {
+        #     "dim": "d=3",
+        #     "truncation_mode": "B",
+        #     "num_sites": [3, 3, 3],
+        #     "PBCs": [True, True, True],
+        #     "cutoff": 3,
+        #     "site_coords_for_comp": [(0, 0, 0)],
+        #     "file_path_state_data": work_dir / "B3_dim(3)_cube_PBC_plaquette_states.json.gz",
+        #     "file_path_mat_elem_data": work_dir / "B3_dim(3)_cube_PBC_magnetic_hamiltonian.json.gz"
+        # },
         {
             "dim": "d=3",
             "truncation_mode": "B",
             "num_sites": [3, 3, 3],
             "PBCs": [True, True, True],
-            "cutoff": 3,
+            "cutoff": 4,
             "site_coords_for_comp": [(0, 0, 0)],
-            "file_path_state_data": work_dir / "B3_dim(3)_cube_PBC_plaquette_states.json.gz",
-            "file_path_mat_elem_data": work_dir / "B3_dim(3)_cube_PBC_magnetic_hamiltonian.json.gz"
+            "file_path_state_data": work_dir / "B4_dim(3)_PBC_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B4_dim(3)_PBC_magnetic_hamiltonian.json.gz"
         },
     ]
+    lattice_cases = lattice_cases_T_truncations_PBC + lattice_cases_B_truncations_PBC
     parallelize = True  # May cause EOFError. Rerun if this happens.
 
     # Data generation.
