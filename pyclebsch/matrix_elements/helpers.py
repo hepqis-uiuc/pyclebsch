@@ -4,15 +4,7 @@ HELPER FUNCTIONS
 
 import numpy as np
 from itertools import combinations_with_replacement
-from ..su_n_operators import calc_dimension, find_suN_basis
-
-def casimir(R: tuple) -> float:
-    """
-    Calculates the quadratic casimir for an SU(N) irrep, R, given by an i-weight.
-    This is done by averaging the trace of the sum of su(N) basis matrices squared.
-    """
-
-    return np.real(sum(T@T for T in find_suN_basis(R)).trace()/calc_dimension(R))
+from ..su_n_operators import calc_casimir
 
 def conjugate_irrep(R: tuple) -> tuple:
     """
@@ -46,7 +38,7 @@ def get_irreps(max_casimir: int | float, N: int) -> dict[tuple, float]:
         # are less than max_casimir.
         for trial_rep in combinations_with_replacement(range(T+1), N-2):
             R = (T,) + trial_rep[::-1] + (0,)
-            R_casimir = casimir(R)
+            R_casimir = calc_casimir(R)
             if R_casimir < max_casimir or np.isclose(R_casimir, max_casimir):
                 stop_search = False
                 irreps[R] = R_casimir

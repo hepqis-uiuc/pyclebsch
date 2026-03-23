@@ -26,6 +26,35 @@ def calc_dimension(iweight: IrrepWeight) -> int:
     return round(dim)
 
 
+def calc_casimir(iweight: IrrepWeight) -> float:
+    """Returns the quadratic Casimir eigenvalue of an irrep.
+    """
+
+    N = len(iweight)
+    R = [j-iweight[-1] for j in iweight]
+
+    res = N*sum(R[i]*(R[i] + N - 1 - 2*i) for i in range(N))
+    res -= sum(R)**2
+
+    return res/(2*N)
+
+
+def calc_dynkin_index(iweight: IrrepWeight) -> float:
+    """Returns the Dynkin index of an irrep.
+    """
+
+    N = len(iweight)
+    R = [j-iweight[-1] for j in iweight]
+
+    cas = N*sum(R[i]*(R[i] + N - 1 - 2*i) for i in range(N))
+    cas -= sum(R)**2
+
+    dimR = calc_dimension(R)
+    dimG = N**2 - 1
+
+    return cas*dimR/(2*N*dimG)
+
+
 def calc_weight(gt_pattern: list[list], kind: str) -> list:
     """Returns the weight of a basis state of an irrep.
     The basis state is given as a gt_pattern.
@@ -56,6 +85,7 @@ def calc_weight(gt_pattern: list[list], kind: str) -> list:
         return weight
     else:
         raise ValueError('Invalid weight kind.')
+
 
 def find_gt_patterns(iweight: IrrepWeight) -> list[list[list]]:
     """Creates all GT-patterns for an irrep.
