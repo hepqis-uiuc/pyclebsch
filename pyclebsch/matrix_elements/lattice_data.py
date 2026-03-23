@@ -10,7 +10,7 @@ from tqdm import tqdm
 from .helpers import *
 from ..cgc import calc_cgcs
 from collections import defaultdict
-from ..su_n_operators import find_direct_sum, IrrepWeight
+from ..su_n_operators import calc_casimir, find_direct_sum, IrrepWeight
 from more_itertools import distinct_permutations
 from itertools import product, combinations_with_replacement
 
@@ -322,7 +322,7 @@ def irreps_and_singlets(N, sites, truncation_mode, cutoff):
     else:
         raise ValueError('N must be an integer greater than 1.')
     if truncation_mode=='T' and isinstance(cutoff, int) and cutoff >= 0:
-        trial_irreps = {R: casimir(R) for R in sorted(r[::-1]+(0,) for r in combinations_with_replacement(range(cutoff+1), N-1))}
+        trial_irreps = {R: calc_casimir(R) for R in sorted(r[::-1]+(0,) for r in combinations_with_replacement(range(cutoff+1), N-1))}
     elif truncation_mode in ['C','B'] and cutoff >= 0:
         trial_irreps = get_irreps(cutoff, N)
     else:

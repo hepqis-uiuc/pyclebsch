@@ -14,13 +14,13 @@ user_invocable: true
 
 **Repository structure**:
 - `pyclebsch/cgc.py` — CGC computation (highest-weight, lower-weight, validation)
-- `pyclebsch/su_n_operators.py` — SU(N) irrep dimensions, GT patterns, ladder operators, decompositions, plethysms
+- `pyclebsch/su_n_operators.py` — SU(N) irrep dimensions, GT patterns, ladder operators, decompositions, plethysms, Casimir, Dynkin index
 - `pyclebsch/symmetric_group/tableaux.py` — Young tableaux, partitions, rim hooks
 - `pyclebsch/symmetric_group/young_symmetrizer.py` — Young symmetrizer construction
 - `pyclebsch/symmetric_group/plethysm_utils.py` — Adams operators, Weyl orbits, characters
 - `pyclebsch/matrix_elements/lattice_data.py` — Lattice geometry, plaquette states, truncation, Gauss law
 - `pyclebsch/matrix_elements/plaquette_matrix_elements.py` — Wilson loop matrix elements via site factors
-- `pyclebsch/matrix_elements/helpers.py` — Casimir, conjugate irrep, irrep enumeration
+- `pyclebsch/matrix_elements/helpers.py` — Conjugate irrep, irrep enumeration
 - `run/gen_ymcirc_data.py` — JSON generation script for ymcirc
 - `tests/` — pytest suite
 - `CGC_Data/` — Pickle cache for computed CGCs
@@ -291,7 +291,7 @@ Captures whether a plaquette is interior, edge, or corner. Half-links sorted by 
 
 **T truncation** (`truncation_mode='T'`): Cutoff bounds the first i-weight component. `T=1` for SU(3) gives irreps `{(0,0,0), (1,0,0), (1,1,0)}`.
 
-**C truncation** (`truncation_mode='C'`): Cutoff bounds the quadratic Casimir of each individual link irrep. `casimir(R) = Tr(sum T_i^2) / dim(R)`.
+**C truncation** (`truncation_mode='C'`): Cutoff bounds the quadratic Casimir of each individual link irrep. `calc_casimir(R) = Tr(sum T_i^2) / dim(R)`.
 
 **B truncation** (`truncation_mode='B'`): Cutoff bounds the sum of Casimirs of all irreps meeting at each site. More restrictive than C — different sites can support different irrep sets. Implemented in `irreps_and_singlets` via the `B_valid` check.
 
