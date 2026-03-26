@@ -4,7 +4,7 @@ from scipy.sparse.linalg import eigsh
 from itertools import product, permutations
 from collections import Counter, defaultdict
 from more_itertools import locate, product_index
-from pathlib import Path, PurePath
+from pathlib import Path
 from pickle import load, dump
 
 from pyclebsch.su_n_operators import calc_dimension, calc_weight, find_gt_patterns, find_direct_sum, find_symmetry_direct_sum, ladder_op
@@ -13,13 +13,27 @@ from pyclebsch.symmetric_group.young_symmetrizer import young_symmetrizer
 
 EPS = 1e-10
 
-# Creates CGC_Data directory in directory of this script.
-def _create_cgc_data_directory():
-    script_directory = Path(__file__).resolve().parent.parent
-    data_directory = PurePath(script_directory, 'CGC_Data')
-    Path(data_directory).mkdir(exist_ok=True)
+_cgc_cache_dir: Path | None = Path("./CGC_Data")
 
-    return data_directory
+def set_cache_dir(path: str | Path | None) -> None:
+    """Set the directory where computed CGCs are cached.
+    Pass None to disable caching entirely.
+    """
+    global _cgc_cache_dir
+    _cgc_cache_dir = Path(path) if path is not None else None
+
+def get_cache_dir() -> Path | None:
+    """Return the current CGC cache directory, or None if caching is disabled."""
+    return _cgc_cache_dir
+
+def _resolve_cache_dir() -> Path | None:
+    """Return the effective cache directory, creating it if needed.
+    Returns None when caching is disabled.
+    """
+    if _cgc_cache_dir is None:
+        return None
+    _cgc_cache_dir.mkdir(parents=True, exist_ok=True)
+    return _cgc_cache_dir
 
 
 def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, multiplicity: int) -> dict[int, dict[tuple, float]]:
@@ -36,12 +50,12 @@ def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, 
 
     # Return CGCs if already computed.
 
-    highest_weight_cgc_data_path = PurePath(_create_cgc_data_directory(), str(product_iweights), 'highest_weight_CGC_' + str(sum_iweight))
-    if Path(highest_weight_cgc_data_path).exists():
-        with open(highest_weight_cgc_data_path, 'rb') as fp:
-            return load(fp)
-    else:
-        pass
+    cache_dir = _resolve_cache_dir()
+    if cache_dir is not None:
+        highest_weight_cgc_data_path = cache_dir / str(product_iweights) / ('highest_weight_CGC_' + str(sum_iweight))
+        if highest_weight_cgc_data_path.exists():
+            with open(highest_weight_cgc_data_path, 'rb') as fp:
+                return load(fp)
 
     # Gather initial data. The GT-pattern for the highest-weight state
     # of sum_iweight can be manually made. gt_patterns is a dictionary
@@ -407,8 +421,11 @@ def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, 
 
     # Save CGCs.
 
-    with open(highest_weight_cgc_data_path, 'wb') as fp:
-        dump(cgc_dict, fp)
+    if cache_dir is not None:
+        highest_weight_cgc_data_path = cache_dir / str(product_iweights) / ('highest_weight_CGC_' + str(sum_iweight))
+        highest_weight_cgc_data_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(highest_weight_cgc_data_path, 'wb') as fp:
+            dump(cgc_dict, fp)
 
     return cgc_dict
 
@@ -427,12 +444,12 @@ def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight_mult_idx: 
 
     # Return CGCs if already computed.
 
-    lower_weight_cgc_data_path = PurePath(_create_cgc_data_directory(), str(product_iweights), f'lower_weight_CGC_{sum_iweight_mult_idx}')
-    if Path(lower_weight_cgc_data_path).exists():
-        with open(lower_weight_cgc_data_path, 'rb') as fp:
-            return load(fp)
-    else:
-        pass
+    cache_dir = _resolve_cache_dir()
+    if cache_dir is not None:
+        lower_weight_cgc_data_path = cache_dir / str(product_iweights) / f'lower_weight_CGC_{sum_iweight_mult_idx}'
+        if lower_weight_cgc_data_path.exists():
+            with open(lower_weight_cgc_data_path, 'rb') as fp:
+                return load(fp)
 
     # Gather initial data. gt_patterns is a dictionary of GT-patterns for 
     # basis states of irreps in product_iweights as well as sum_iweight.
@@ -543,8 +560,11 @@ def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight_mult_idx: 
 
     # Save CGCs.
 
-    with open(lower_weight_cgc_data_path, 'wb') as fp:
-        dump(cgc_dict, fp)
+    if cache_dir is not None:
+        lower_weight_cgc_data_path = cache_dir / str(product_iweights) / f'lower_weight_CGC_{sum_iweight_mult_idx}'
+        lower_weight_cgc_data_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lower_weight_cgc_data_path, 'wb') as fp:
+            dump(cgc_dict, fp)
 
     return cgc_dict
 
@@ -568,8 +588,10 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     product_irreps = sorted(normalized_iweights)
 
     # Ensure directory for product_iweights exists to save CGCs.
-    cgc_data_directory = PurePath(_create_cgc_data_directory(), str(product_irreps))
-    Path(cgc_data_directory).mkdir(exist_ok=True)
+    cache_dir = _resolve_cache_dir()
+    if cache_dir is not None:
+        cgc_data_directory = cache_dir / str(product_irreps)
+        cgc_data_directory.mkdir(parents=True, exist_ok=True)
     
     # reorder is created to unsort the product basis states in computed CGCs.
     # The ith index of mapping gives the index the ith unsorted irrep becomes

@@ -46,8 +46,8 @@ print(f"{ops.find_plethysms(irrep_8, 3)}\n")
 
 """
 EXAMPLES FOR pyclebsch.cgc
-(THIS WILL CAUSE WRITES TO YOUR FILE SYSTEM
-IN A FOLDER CALLED CGC_Data WHICH IS IN THE PARENT FOLDER OF pyclebsch)
+(THIS WILL WRITE CACHED CGC DATA TO ./CGC_Data IN YOUR WORKING DIRECTORY.
+USE pyclebsch.cgc.set_cache_dir() TO CHANGE THE LOCATION, OR PASS None TO DISABLE.)
 """
 
 # This is the dictionary of the CGC data, and it is written into the file system
