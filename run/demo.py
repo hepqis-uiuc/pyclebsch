@@ -49,6 +49,8 @@ EXAMPLES FOR pyclebsch.cgc
 (THIS WILL WRITE CACHED CGC DATA TO ./CGC_Data IN YOUR WORKING DIRECTORY.
 USE pyclebsch.cgc.set_cache_dir() TO CHANGE THE LOCATION, OR PASS None TO DISABLE.)
 """
+# cgc.set_cache_dir("./cgc-out-dir")
+#cgc.set_cache_dir(None)
 
 # This is the dictionary of the CGC data, and it is written into the file system
 # All calculations are done where the CGCs are in an irrep of the symmetric group
