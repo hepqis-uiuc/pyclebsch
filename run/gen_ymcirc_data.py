@@ -11,8 +11,8 @@ the list lattice_cases below.
 See su_n_wilson_loop.py for more detailed
 information about various script options.
 """
-import copy
 from tqdm import tqdm
+from itertools import product
 
 import gzip
 import json
@@ -115,23 +115,7 @@ if __name__ == "__main__":
         #     "file_path_mat_elem_data": work_dir
         #     / "T1_dim(2)_magnetic_hamiltonian.json.gz",
         # },
-        # {
-        #     "dim": "d=3",       # This case is a single "cube" of links.
-        #     "truncation_mode": "T",
-        #     "num_sites": [2, 2, 2],
-        #     "PBCs": [False, False, False],
-        #     "cutoff": 1,
-        #     "site_coords_for_comp": [
-        #         (0, 0, 0),      # bottom, front, left side
-        #         (1, 0, 0),      # right side
-        #         (0, 1, 0),      # back
-        #         (1, 1, 1)       # top
-        #     ],
-        #     "file_path_state_data": work_dir / "T1_dim(3)_OBC_plaquette_states.json.gz",
-        #     "file_path_mat_elem_data": work_dir
-        #     / "T1_dim(3)_OBC_magnetic_hamiltonian.json.gz",
-        # }
-        #,
+        
         # {
         #     "dim": "d=3",
         #     "truncation_mode": "T",
@@ -142,6 +126,52 @@ if __name__ == "__main__":
         #     "file_path_state_data": work_dir / "T1_dim(3)_PBC_plaquette_states.json.gz",
         #     "file_path_mat_elem_data": work_dir / "T1_dim(3)_PBC_magnetic_hamiltonian.json.gz"
         # },
+    ]
+    lattice_cases_T_trunctions_non_PBC = [
+        {
+            "dim": "d=2",       # This case is a single "square" of links.
+            "truncation_mode": "T",
+            "num_sites": [2, 2, 1],
+            "PBCs": [False, False, False],
+            "cutoff": 1,
+            "site_coords_for_comp": [tuple(t) for t in product(range(2), repeat=2)],
+            "file_path_state_data": work_dir / "T1_dim(2)_OBC_2x2_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir
+            / "T1_dim(2)_OBC_2x2_magnetic_hamiltonian.json.gz",
+        },
+        {
+            "dim": "d=2",       # This case covers multiple-cell "square" of links with OBCs. num_sites big enough so data contains all possible signatures.
+            "truncation_mode": "T",
+            "num_sites": [4, 4, 1],
+            "PBCs": [False, False, False],
+            "cutoff": 1,
+            "site_coords_for_comp": [tuple(t) for t in product(range(4), repeat=2)],
+            "file_path_state_data": work_dir / "T1_dim(2)_OBC_large_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir
+            / "T1_dim(2)_OBC_large_magnetic_hamiltonian.json.gz",
+        },
+        {
+            "dim": "d=3",       # This case is a single "cube" of links.
+            "truncation_mode": "T",
+            "num_sites": [2, 2, 2],
+            "PBCs": [False, False, False],
+            "cutoff": 1,
+            "site_coords_for_comp": [tuple(t) for t in product(range(2), repeat=3)],
+            "file_path_state_data": work_dir / "T1_dim(3)_OBC_2x2x2_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir
+            / "T1_dim(3)_OBC_2x2x2_magnetic_hamiltonian.json.gz",
+        },
+        {
+            "dim": "d=3",       # This case covers multiple-cell "cubes" of links with OBCs. num_sites big enough so data contains all possible signatures.
+            "truncation_mode": "T",
+            "num_sites": [4, 4, 4],
+            "PBCs": [False, False, False],
+            "cutoff": 1,
+            "site_coords_for_comp": [tuple(t) for t in product(range(4), repeat=3)],
+            "file_path_state_data": work_dir / "T1_dim(3)_OBC_large_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir
+            / "T1_dim(3)_OBC_large_magnetic_hamiltonian.json.gz",
+        },
     ]
     lattice_cases_B_truncations_PBC = [
         # {
@@ -284,18 +314,30 @@ if __name__ == "__main__":
         #     "file_path_state_data": work_dir / "B3_dim(3)_PBC_plaquette_states.json.gz",
         #     "file_path_mat_elem_data": work_dir / "B3_dim(3)_PBC_magnetic_hamiltonian.json.gz"
         # },
+        # {
+        #     "dim": "d=3",
+        #     "truncation_mode": "B",
+        #     "num_sites": [3, 3, 3],
+        #     "PBCs": [True, True, True],
+        #     "cutoff": 4,
+        #     "site_coords_for_comp": [(0, 0, 0)],
+        #     "file_path_state_data": work_dir / "B4_dim(3)_PBC_plaquette_states.json.gz",
+        #     "file_path_mat_elem_data": work_dir / "B4_dim(3)_PBC_magnetic_hamiltonian.json.gz"
+        # },
+    ]
+    lattice_cases_B_truncations_non_PBC = [ # TODO add some d=3 mixed BC cases
         {
-            "dim": "d=3",
+            "dim": "d=2",       # "mixed BCs in d=2 with enough sites to cover all possible signatures on a large lattice"
             "truncation_mode": "B",
-            "num_sites": [3, 3, 3],
-            "PBCs": [True, True, True],
-            "cutoff": 4,
-            "site_coords_for_comp": [(0, 0, 0)],
-            "file_path_state_data": work_dir / "B4_dim(3)_PBC_plaquette_states.json.gz",
-            "file_path_mat_elem_data": work_dir / "B4_dim(3)_PBC_magnetic_hamiltonian.json.gz"
+            "num_sites": [3, 4, 1],
+            "PBCs": [True, False, False],
+            "cutoff": 3,
+            "site_coords_for_comp": [tuple(t) for t in product(range(2), repeat=2)],
+            "file_path_state_data": work_dir / "B3_dim(2)_PBC_TFF_large_plaquette_states.json.gz",
+            "file_path_mat_elem_data": work_dir / "B3_dim(2)_PBC_TFF_large_magnetic_hamiltonian.json.gz"
         },
     ]
-    lattice_cases = lattice_cases_T_truncations_PBC + lattice_cases_B_truncations_PBC
+    lattice_cases = lattice_cases_T_truncations_PBC + lattice_cases_T_trunctions_non_PBC + lattice_cases_B_truncations_PBC + lattice_cases_B_truncations_non_PBC
     parallelize = True  # May cause EOFError. Rerun if this happens.
 
     # Data generation.
