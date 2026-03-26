@@ -1,7 +1,7 @@
 # pyclebsch
 A Python package for calculating SU(N) Clebsch-Gordan coefficients (CGCs). It is largely based on the algorithm presented in https://homepages.physik.uni-muenchen.de/~vondelft/PapersVonDelft/Alex2011.pdf, with some modifications to account for residual symmetric group symmetries that can be present in computed CGCs.
 
-Note that the current version of the package reads/writes data to a folder 'CGC_Data' in the same directory as the `pyclesbsch` package. This folder is created if it is not already present.
+Note that by default, Clebsch-Gordan coefficients are cached in a `CGC_Data` directory in whatever the current working directory is. See the "Caching" section below for more information on this behavior.
 
 This codebase is currently at an 'alpha' stage of development. Breaking changes should be expected.
 
@@ -17,6 +17,22 @@ There is no need to manually activate or deactivate the virtual environment. Inf
 ```shell
 uv pip list
 ```
+
+## Caching CGC data to disk
+In the process of running, computed Clebsch-Gordan coefficients are by default cached in a `CGC_Data` folder in the current working directory. This is fine for some use cases, but if you anticipate running the same script from multiple directories, it can lead to unnecessary data duplication. To avoid such duplication, the cache directory can be set with an absolute path in the following way:
+```Python
+import pyclebsch.cgc as cgc
+
+cgc.set_cache_dir("/path/to/cache/dir/desired-cgc-dir-name")
+```
+In this case, computed Clebsch-Gordan coefficients will be saved in the folder `desired-cgc-dir-name` at the absolute path specified. Alternatively, caching to disk can be disabled via
+```Python
+import pyclebsch.cgc as cgc
+
+cgc.set_cache_dir(None)
+```
+
+If the default caching behavior doesn't work for your use case, configuring the cache directory should be done before using any other `pyclebsch` functionality.
 
 ### Installation for Windows subsystem for Linux (WSL)
 After setting up WSL there is a checklist of programs you may need before proceeding with the regular installation instructions above:
