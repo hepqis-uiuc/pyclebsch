@@ -7,13 +7,21 @@ from more_itertools import locate, product_index
 from pathlib import Path
 from pickle import load, dump
 
-from pyclebsch.su_n_operators import calc_dimension, calc_weight, find_gt_patterns, find_direct_sum, find_symmetry_direct_sum, ladder_op
+from pyclebsch.su_n_operators import (
+    calc_dimension,
+    calc_weight,
+    find_gt_patterns,
+    find_direct_sum,
+    find_symmetry_direct_sum,
+    ladder_op,
+)
 from pyclebsch.symmetric_group.tableaux import find_tableaux
 from pyclebsch.symmetric_group.young_symmetrizer import young_symmetrizer
 
 EPS = 1e-10
 
 _cgc_cache_dir: Path | None = Path("./CGC_Data")
+
 
 def set_cache_dir(path: str | Path | None) -> None:
     """Set the directory where computed CGCs are cached.
@@ -22,9 +30,11 @@ def set_cache_dir(path: str | Path | None) -> None:
     global _cgc_cache_dir
     _cgc_cache_dir = Path(path) if path is not None else None
 
+
 def get_cache_dir() -> Path | None:
     """Return the current CGC cache directory, or None if caching is disabled."""
     return _cgc_cache_dir
+
 
 def _resolve_cache_dir() -> Path | None:
     """Return the effective cache directory, creating it if needed.
@@ -36,7 +46,9 @@ def _resolve_cache_dir() -> Path | None:
     return _cgc_cache_dir
 
 
-def calc_highest_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, multiplicity: int) -> dict[int, dict[tuple, float]]:
+def calc_highest_weight_cgcs(
+    product_iweights: list[tuple], sum_iweight: tuple, multiplicity: int
+) -> dict[int, dict[tuple, float]]:
     """Calculates the Clebsch-Gordan Coefficients for the highest-weight state
     of an irrep (sum_iweight) appearing in the direct-sum decomposition of a
     direct product of irreps (product_iweights). A multiplicity number
