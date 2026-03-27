@@ -17,6 +17,11 @@ There is no need to manually activate or deactivate the virtual environment. Inf
 ```shell
 uv pip list
 ```
+### Installation for Windows subsystem for Linux (WSL)
+After setting up WSL there is a checklist of programs you may need before proceeding with the regular installation instructions above:
+
+1. Download / update Git by running `sudo apt-get install git`.
+2. Download / update Python3 by running `sudo apt install python3 python3-pip`
 
 ## Caching CGC data to disk
 In the process of running, computed Clebsch-Gordan coefficients are by default cached in a `CGC_Data` folder in the current working directory. This is fine for some use cases, but if you anticipate running the same script from multiple directories, it can lead to unnecessary data duplication. To avoid such duplication, the cache directory can be set with an absolute path in the following way:
@@ -33,12 +38,6 @@ cgc.set_cache_dir(None)
 ```
 
 If the default caching behavior doesn't work for your use case, configuring the cache directory should be done before using any other `pyclebsch` functionality.
-
-### Installation for Windows subsystem for Linux (WSL)
-After setting up WSL there is a checklist of programs you may need before proceeding with the regular installation instructions above:
-
-1. Download / update Git by running `sudo apt-get install git`.
-2. Download / update Python3 by running `sudo apt install python3 python3-pip`
 
 ## Usage/citations
 If you use this code in a paper, please cite:
