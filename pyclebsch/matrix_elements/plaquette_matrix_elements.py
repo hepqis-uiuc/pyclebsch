@@ -318,6 +318,9 @@ def glue_plaquette_site_factors(s1, info, site_factors, ctrl_idxs, BCs, dims, EP
 
     # Gather s2 site factors that match the s1 ith plaquette link irrep,
     # and the control link irrep if BCs apply.
+    # Guard: on non-periodic lattices, sites may have different link counts
+    # and thus different allowed irreps; skip if s2 has no matching irreps.
+    if (s1[0],s1[2]) not in info[2]: return matrix_elements
     if s2_has_BCs:
         S2 = info[2][(s1[0],s1[2])][s1_i_ctrl]
     else:
@@ -331,6 +334,7 @@ def glue_plaquette_site_factors(s1, info, site_factors, ctrl_idxs, BCs, dims, EP
 
         # Gather s3 site factors that match s2 jth plaquette link irreps,
         # accounting for BCs.
+        if (s2[1],s2[3]) not in info[3]: continue
         if s3_has_BCs:
             S3 = info[3][(s2[1],s2[3])][s2_j_ctrl]
         else:
