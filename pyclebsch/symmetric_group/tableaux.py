@@ -56,7 +56,7 @@ def _tableau_data(tableau, extra_data=False):
     n = sum(partition)
 
     # Extra data includes the product of hook lengths of the tableau
-        # (necessary for normalization).
+    # (necessary for normalization).
 
     if extra_data:
         hook_length_prod = _product_of_hook_lengths(partition)
