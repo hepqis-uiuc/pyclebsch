@@ -44,8 +44,7 @@ def _product_of_hook_lengths(partition):
 def _tableau_data(tableau, extra_data=False):
     """Finds the permutations that preserve the rows and columns of a tableau
     as well as whether the tableau is row and/or column ordered.
-    With extra_data, inverses of the permutations and
-    a product of hook lengths are also returned.
+    With extra_data, a product of hook lengths are also returned.
     """
 
     # Gather initial data. Out of these variables, n is returned.
@@ -56,12 +55,11 @@ def _tableau_data(tableau, extra_data=False):
     tableau_T = [[tableau[j][i] for j in range(conjugate_partition[i])] for i in range(partition[0])]
     n = sum(partition)
 
-    # Extra data includes the product of hook lengths of the tableau (necessary
-    # for normalization) and the inverse row and column permutations.
+    # Extra data includes the product of hook lengths of the tableau
+        # (necessary for normalization).
 
     if extra_data:
         hook_length_prod = _product_of_hook_lengths(partition)
-        inverse_row_permutations, inverse_col_permutations = [],[]
     else:
         pass
 
@@ -82,8 +80,7 @@ def _tableau_data(tableau, extra_data=False):
     # all combinations X of disjoint permutations on each row/column.
     # sorted_rows/cols sorts each row/column, for reference, to build
     # the mapping that each X corresponds to. perm turns the mapping
-    # to the usual tuple version of a permutation. An inverse permutation
-    # is found by using the inverse mapping.
+    # to the usual tuple version of a permutation.
 
     row_permutations = []
     sorted_rows = [sorted(row) for row in tableau if len(row)>1]
@@ -91,11 +88,6 @@ def _tableau_data(tableau, extra_data=False):
         mapping = {sorted_rows[i][j]: X[i][j] for i in range(len(sorted_rows)) for j in range(partition[i]) if X[i][j] != sorted_rows[i][j]}
         perm = tuple(mapping[i] if i in mapping else i for i in range(n))
         row_permutations.append(perm)
-        if extra_data:
-            inverse_mapping = {v:k for k,v in mapping.items()}
-            inverse_row_permutations.append(tuple(inverse_mapping[i] if i in inverse_mapping else i for i in range(n)))
-        else:
-            continue
 
     col_permutations = []
     sorted_cols = [sorted(col) for col in tableau_T if len(col)>1]
@@ -103,14 +95,9 @@ def _tableau_data(tableau, extra_data=False):
         mapping = {sorted_cols[i][j]: X[i][j] for i in range(len(sorted_cols)) for j in range(conjugate_partition[i]) if X[i][j] != sorted_cols[i][j]}
         perm = tuple(mapping[i] if i in mapping else i for i in range(n))
         col_permutations.append(perm)
-        if extra_data:
-            inverse_mapping = {v:k for k,v in mapping.items()}
-            inverse_col_permutations.append(tuple(inverse_mapping[i] if i in inverse_mapping else i for i in range(n)))
-        else:
-            continue
 
     if extra_data:
-        return n, row_permutations, col_permutations, is_row_ordered, is_col_ordered, inverse_row_permutations, inverse_col_permutations, hook_length_prod
+        return n, row_permutations, col_permutations, is_row_ordered, is_col_ordered, hook_length_prod
     else:
         return n, row_permutations, col_permutations, is_row_ordered, is_col_ordered
 

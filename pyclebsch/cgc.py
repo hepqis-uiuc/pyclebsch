@@ -22,7 +22,6 @@ EPS = 1e-10
 
 _cgc_cache_dir: Path | None = Path("./CGC_Data")
 
-
 def set_cache_dir(path: str | Path | None) -> None:
     """Set the directory where computed CGCs are cached.
     Pass None to disable caching entirely.
@@ -261,7 +260,7 @@ def calc_highest_weight_cgcs(
                 # in ival_idxs in initial_perm.
 
                 for perms in product(*(permutations([idx_list[x][y] for y in ival_idxs[x][n]]) for x in range(len(idx_list)) for n in ival_idxs[x])):
-                    temp,pidx = [0 for k in range(len(product_iweights))],0
+                    temp,pidx = [0 for _ in range(len(product_iweights))],0
                     for x in range(len(idx_list)):
                         for n in ival_idxs[x]:
                             for k in range(len(ival_idxs[x][n])):
@@ -594,10 +593,28 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     product_iweights are sorted; computed CGCs are then returned with
     product basis states unsorted according to the input product_iweights.
     """
-    # Get direct-sum decomposition and normalize/sort product_iweights.
+    # Get direct-sum decomposition and normalize product_iweights.
+    N = len(product_iweights[0])
     decomposition = find_direct_sum(product_iweights)
     normalized_iweights = [tuple(j-iweight[-1] for j in iweight) for iweight in product_iweights]
-    product_irreps = sorted(normalized_iweights)
+    
+    # Sort nontrivial iweights. Trivial irreps can be appended later.
+    # product_irreps contains the direct product CGCs will be calculated for.
+    # (1) If at least two irreps are nontrivial, then product_irreps = nontrivial_iweights.
+    # (2) If only one irrep is nontrivial, then CGCs are calculated for trivial x irrep.
+    # (3) If all irreps are trivial, then CGCs are calculated for trivial x trivial.
+    # excess gives the number of trivial irrep states to be eventually appended.
+    trivial = (0,)*N
+    nontrivial_iweights = sorted(iweight for iweight in normalized_iweights if iweight != trivial)
+    if len(nontrivial_iweights) >= 2:
+        product_irreps = nontrivial_iweights
+        excess = normalized_iweights.count(trivial)
+    elif len(nontrivial_iweights) == 1:
+        product_irreps = [trivial] + nontrivial_iweights
+        excess = normalized_iweights.count(trivial)-1
+    else:
+        product_irreps = [trivial, trivial]
+        excess = normalized_iweights.count(trivial)-2
 
     # Ensure directory for product_iweights exists to save CGCs.
     cache_dir = _resolve_cache_dir()
@@ -605,7 +622,8 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
         cgc_data_directory = cache_dir / str(product_irreps)
         cgc_data_directory.mkdir(parents=True, exist_ok=True)
     
-    # reorder is created to unsort the product basis states in computed CGCs.
+    # reorder is created to unsort the product basis states in computed CGCs,
+    # and to append trivial states (to the front, as they would be for a sorted state).
     # The ith index of mapping gives the index the ith unsorted irrep becomes
     # in the sorted product_irreps. When the same irreps appear in
     # normalized_iweights, reorder simply slides these irreps together to the right.
@@ -615,7 +633,9 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
         for unsrt_idx in locate(normalized_iweights, lambda x: x==irrep):
             mapping[unsrt_idx] = srt_idx
             srt_idx += 1
-    reorder = lambda X: tuple(X[idx] for idx in mapping)
+    def reorder(X):
+        Xp = (0,)*excess + X
+        return tuple(Xp[idx] for idx in mapping)
 
     # Returns specific CGC of a product basis state.
     if None not in {sum_iweight,mult_idx,sum_state,product_state}:

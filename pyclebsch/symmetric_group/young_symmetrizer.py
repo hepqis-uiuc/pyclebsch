@@ -1,6 +1,7 @@
+from math import factorial
 from collections import defaultdict
 from collections.abc import Generator
-from itertools import product
+from itertools import product, permutations
 
 from pyclebsch.symmetric_group.tableaux import YoungTableau, _tableau_data
 
@@ -52,15 +53,12 @@ def _reduce_perms(perms_lists, anti_idxs, n):
     distinct permutations pk and whose values are their coefficients ak.
     """
 
-    # perms_lists is given such that the first list of permutations actually
-    # acts first. ordered reverses perms_lists to correct this. res is the
-    # final output; because the symmetrizer is so far unnormalized, its
-    # permutations' coefficients will be integers.
-    ordered = perms_lists[::-1]  
+    # res is the final output; because the symmetrizer is so far
+    # unnormalized, its permutations' coefficients will be integers.
     res = defaultdict(int)
-    for i in range(1,len(perms_lists)):
+    for i in range(1, len(perms_lists)):
         if i==1:
-            for p1,p2 in product(ordered[0], ordered[i]):
+            for p1,p2 in product(perms_lists[0], perms_lists[i]):
                 new = _compose_two(p1,p2,n)
                 if 0 in anti_idxs:
                     res[new] += _sgn(p1)
@@ -70,7 +68,7 @@ def _reduce_perms(perms_lists, anti_idxs, n):
                     res[new] += 1
             temp = res.copy()
         else:
-            for p1,p2 in product(temp, ordered[i]):
+            for p1,p2 in product(temp, perms_lists[i]):
                 new = _compose_two(p1,p2,n)
                 if new==p1:
                     continue
@@ -113,28 +111,42 @@ def young_symmetrizer(tableaux: list[YoungTableau], idx_list: list[list]) -> Gen
 
     for tableau in tableaux:
 
+        # Symmetrizers for totally (anti)symmetric irreps
+        # are straightforward to build.
+        if len(tableau)==1:
+            n = len(tableau[0])
+            norm /= factorial(n)
+            symmetrizers.append({p: 1 for p in permutations(range(n))})
+            continue
+        elif len(tableau[0])==1:
+            n = len(tableau)
+            norm /= factorial(n)
+            symmetrizers.append({p: _sgn(p) for p in permutations(range(n))})
+            continue
+        else:
+            pass
+
         # Gather data for the input tableau.
-        # Only the inverse permutations for the input tableau are necessary.
         # The usual Young symmetrizers are built with the convention where
         # column permutations are applied first, followed by row permutations.
         # ~Eq. (26)
-        n, row_perms, col_perms, is_row_ordered, is_col_ordered, inv_row_perms, inv_col_perms, hook_length_prod = _tableau_data(tableau, extra_data=True)
+        n, row_perms, col_perms, is_row_ordered, is_col_ordered, hook_length_prod = _tableau_data(tableau, extra_data=True)
+
+        # perms_lists is a list of list of permutations.
+        # anti_idxs gives which list of permutations in perms_lists
+        # are part of antisymmetrizers, and therefore come with a
+        # factor of sgn(permutation).
 
         # If the tableau is already row-ordered or column-ordered,
         # then the Young symmetrizer can be immediately built.
-        # perms_lists is a tuple of permutations. anti_idxs gives which indices/permutations
-        # in perms_lists are part of antisymmetrizers, and therefore come with a
-        # factor of sgn(permutation). Inverse permutations are included as
-        # necessary. Note that permutation^dagger := permutation^(-1)
-        # and the sign of a permutation equals the sign of its inverse.
         # ~Theorem 4
 
         if is_row_ordered:
-            anti_idxs = [1,2]
-            perms_lists = [row_perms, col_perms, inv_col_perms, inv_row_perms]
+            anti_idxs = [1]
+            perms_lists = [row_perms, col_perms, row_perms]
         elif is_col_ordered:
-            anti_idxs = [0,3]
-            perms_lists = [inv_col_perms, inv_row_perms, row_perms, col_perms]
+            anti_idxs = [0,2]
+            perms_lists = [col_perms, row_perms, col_perms]
 
         else:
 
@@ -174,21 +186,21 @@ def young_symmetrizer(tableaux: list[YoungTableau], idx_list: list[list]) -> Gen
             if is_row_ordered:
                 if M%2==0:
                     ancestor_col_row_perms = [ancestor_perms[i][1] if i%2==0 else ancestor_perms[i][0] for i in range(M)]
-                    perms_lists = ancestor_col_row_perms[::-1] + [row_perms, col_perms, inv_col_perms, inv_row_perms] + ancestor_col_row_perms
-                    anti_idxs = [i for i in range(num) if (i%2==1 and i<num//2) or (i%2==0 and i>=num//2)]
+                    perms_lists = ancestor_col_row_perms[::-1] + [row_perms, col_perms, row_perms] + ancestor_col_row_perms
+                    anti_idxs = [i for i in range(num) if i%2==1]
                 else:
                     ancestor_row_col_row_perms = [ancestor_perms[i][0] if i%2==0 else ancestor_perms[i][1] for i in range(M)]
-                    perms_lists = ancestor_row_col_row_perms[::-1] + [inv_col_perms, inv_row_perms, row_perms, col_perms] + ancestor_row_col_row_perms
-                    anti_idxs = [i for i in range(num) if (i%2==1 and i<num//2) or (i%2==0 and i>num//2)]
+                    perms_lists = ancestor_row_col_row_perms[::-1] + [col_perms, row_perms, col_perms] + ancestor_row_col_row_perms
+                    anti_idxs = [i for i in range(num) if i%2==1]
             elif is_col_ordered:
                 if M%2==0:
                     ancestor_row_col_perms = [ancestor_perms[i][0] if i%2==0 else ancestor_perms[i][1] for i in range(M)]
-                    perms_lists = ancestor_row_col_perms[::-1] + [inv_col_perms, inv_row_perms, row_perms, col_perms] + ancestor_row_col_perms
-                    anti_idxs = [i for i in range(num) if (i%2==0 and i<num//2) or (i%2==1 and i>num//2)]
+                    perms_lists = ancestor_row_col_perms[::-1] + [col_perms, row_perms, col_perms] + ancestor_row_col_perms
+                    anti_idxs = [i for i in range(num) if i%2==0]
                 else:
                     ancestor_col_row_col_perms = [ancestor_perms[i][1] if i%2==0 else ancestor_perms[i][0] for i in range(M)]
-                    perms_lists = ancestor_col_row_col_perms[::-1] + [row_perms, col_perms, inv_col_perms, inv_row_perms] + ancestor_col_row_col_perms
-                    anti_idxs = [i for i in range(num) if (i%2==0 and i<num//2) or (i%2==1 and i>=num//2)]
+                    perms_lists = ancestor_col_row_col_perms[::-1] + [row_perms, col_perms, row_perms] + ancestor_col_row_col_perms
+                    anti_idxs = [i for i in range(num) if i%2==0]
 
         # perms_lists is simplified with reduce_perms. combined_perms is the
         # (unnormalized) Young symmetrizer for this tableau and portion of idx_list.
@@ -209,7 +221,7 @@ def young_symmetrizer(tableaux: list[YoungTableau], idx_list: list[list]) -> Gen
     num_idxs = sum(len(x) for x in idx_list)
     num_idx_lists = len(idx_list)
     for X in product(*symmetrizers):
-        temp = [0 for i in range(num_idxs)]
+        temp = [0 for _ in range(num_idxs)]
         coeff = 1
         for i in range(num_idx_lists):
             coeff *= symmetrizers[i][X[i]]
