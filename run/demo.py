@@ -50,7 +50,6 @@ EXAMPLES FOR pyclebsch.cgc
 USE pyclebsch.cgc.set_cache_dir() TO CHANGE THE LOCATION, OR PASS None TO DISABLE.)
 """
 # cgc.set_cache_dir("./cgc-out-dir")
-cgc.set_cache_dir("/home/lhidalgo/my_data")
 #cgc.set_cache_dir(None)
 
 # This is the dictionary of the CGC data, and it is written into the file system
