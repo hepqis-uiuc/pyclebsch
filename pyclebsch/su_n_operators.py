@@ -353,7 +353,8 @@ def find_direct_sum(product_iweights: list[IrrepWeight], sum_iweight: Optional[I
     # are then sorted lexicographically for neatness.
 
     if sum_iweight is not None:
-        return direct_sum.count(sum_iweight)
+        sum_irrep = tuple(j-sum_iweight[-1] for j in sum_iweight)
+        return direct_sum.count(sum_irrep)
     else:
         direct_sum = Counter(direct_sum)
         direct_sum = dict(sorted(direct_sum.items(), reverse=True))
@@ -412,14 +413,15 @@ def find_symmetry_direct_sum(product_iweights: list[IrrepWeight], sum_iweight: O
                 for sum_irrep in decomp:
                     direct_sum[sum_irrep][partitions] += decomp[sum_irrep]*mult
     else:
+        sum_irrep = tuple(j-sum_iweight[-1] for j in sum_iweight)
         for irreps in product(*(plethysms[R] for R in plethysms)):
             if len(irreps)==1:
-                if irreps[0]==sum_iweight:
+                if irreps[0]==sum_irrep:
                     multiplicity = 1
                 else:
                     multiplicity = 0
             else:
-                multiplicity = find_direct_sum(list(irreps), sum_iweight)
+                multiplicity = find_direct_sum(list(irreps), sum_irrep)
             if multiplicity == 0:
                 continue
             else:
