@@ -51,46 +51,21 @@ Note: SKILL.md says "Python 3.14+" but `pyproject.toml` says `>=3.12`; SKILL.md 
 
 ## Phase 2: `su_n_operators.py` tests (new file `tests/test_su_n_operators.py`)
 
-For each, give an expected value derivable by hand or from a textbook.
+**Status: COMPLETE.** 50 tests passing.
 
-- [ ] `normalize_iweight`: `(3,2,1) -> (2,1,0)`, `(5,5,5) -> (0,0,0)`, already-normalized passes through unchanged.
-- [ ] `calc_dimension` (Weyl formula):
-  - SU(2): `(0,0) -> 1`, `(1,0) -> 2`, `(2,0) -> 3`, `(3,0) -> 4`.
-  - SU(3): `(0,0,0) -> 1`, `(1,0,0) -> 3`, `(1,1,0) -> 3`, `(2,1,0) -> 8`, `(2,0,0) -> 6`, `(3,0,0) -> 10`.
-- [ ] `calc_casimir`:
-  - SU(3) fundamental `(1,0,0)`: `4/3`.
-  - SU(3) adjoint `(2,1,0)`: `3`.
-  - Trivial: `0`.
-- [ ] `calc_dynkin_index`:
-  - SU(3) fundamental: `1/2`.
-  - SU(3) adjoint `(2,1,0)`: `3`.
-- [ ] `calc_weight`:
-  - For SU(2) fundamental: GT `[[1,0],[1]]` gives `'z' -> [1/2]`, `'p' -> [1,0]` (verify exact convention from `find_gt_patterns` output).
-  - For SU(2) fundamental: GT `[[1,0],[0]]` gives `'z' -> [-1/2]`.
-  - Invalid `kind` raises (verify whether it raises in source; if not, omit).
-- [ ] `find_gt_patterns`:
-  - Count check: `len(find_gt_patterns(R)) == calc_dimension(R)` for SU(2): `(1,0)`, `(2,0)`; for SU(3): `(1,0,0)`, `(2,1,0)`.
-  - Index 0 is the highest-weight pattern (top of each row equals the i-weight entries).
-- [ ] `ladder_op`:
-  - For SU(2) fundamental, J(1)- on highest-weight gives the lowest-weight state with coefficient 1.
-  - J(1)+ on highest weight returns empty/zero (annihilated).
-  - For SU(3) adjoint, ladder ops preserve dimension count of nonzero matrix elements (sanity check, hand-checkable subset).
-- [ ] `find_suN_basis`:
-  - SU(2) fundamental: returns 3 sparse matrices (J_x, J_y, J_z forms) with expected sizes 2×2 and the correct commutation relation `[T_1,T_2] = i T_3` (or whichever convention the code uses — pick one fundamental case to verify).
-  - Hermiticity of generators (or whichever conjugate-transpose convention is in use).
-- [ ] `find_direct_sum`:
-  - SU(2): `[(1,0),(1,0)]` → `{(2,0):1, (0,0):1}` (i.e. 2⊗2 = 3⊕1).
-  - SU(3): `[(1,0,0),(1,1,0)]` → `{(2,1,0):1,(0,0,0):1}` (3⊗3̄ = 8⊕1).
-  - SU(3): `[(1,0,0),(1,0,0)]` → `{(2,0,0):1,(1,1,0):1}` (3⊗3 = 6⊕3̄).
-  - SU(3): `[(2,1,0),(2,1,0)]` (8⊗8) → includes `(2,1,0):2` (adjoint appears twice) and `(0,0,0):1`. **Mark slow.**
-  - `sum_iweight` argument returns the int multiplicity for that irrep.
-- [ ] `find_symmetry_direct_sum`:
-  - SU(3) `[(1,0,0),(1,0,0)]` (two identical 3s): the 6 should sit under partition `(2,)` (symmetric), the 3̄ under `(1,1)` (antisymmetric).
-  - Returns `(decomp_dict, idx_list)`; verify `idx_list == [[0,1]]`.
-- [ ] `find_plethysms`:
-  - SU(2) `(1,0)` with `n=2`: triplet `(2,0)` under `(2,)`, singlet `(0,0)` under `(1,1)`.
-  - SU(3) `(1,0,0)` with `n=2`: 6 under `(2,)`, 3̄ under `(1,1)`.
-  - SU(3) `(1,0,0)` with `n=3`: 10 under `(3,)`, 8 under `(2,1)` with multiplicity 2 (verify via reference) — **mark slow** if expensive.
+- [x] `normalize_iweight`: subtracts last entry; idempotent on already-normalized inputs.
+- [x] `calc_dimension`: SU(2) and SU(3) cases against Weyl formula expectations (parametrized).
+- [x] `calc_casimir`: trivial=0, SU(3) fund=4/3, antifund=4/3, adjoint=3, plus normalization invariance.
+- [x] `calc_dynkin_index`: SU(3) fund=1/2, adjoint=3.
+- [x] `calc_weight`: SU(2) fund HW/LW z- and p-weight values; invalid kind raises `ValueError`.
+- [x] `find_gt_patterns`: count = `calc_dimension` (parametrized over 7 irreps); index 0 is highest-weight pattern; sorted by p-weight descending.
+- [x] `ladder_op`: J± annihilate HW/LW correctly; J− HW = LW with coefficient 1; J+ LW = HW with coefficient 1 (SU(2) fundamental).
+- [x] `find_suN_basis`: generator count = N²−1 for SU(2) and SU(3); fundamental basis matrices are exactly (σ_z/2, σ_x/2, σ_y/2) for SU(2); `[T_x, T_y] = i T_z`; `Tr(T_a²) = 1/2` (standard fundamental normalization).
+- [x] `find_direct_sum`: SU(2) 2⊗2; SU(3) 3⊗3̄, 3⊗3, 8⊗8 (the last includes (2,1,0):2); `sum_iweight` argument returns int multiplicity (including 0).
+- [x] `find_symmetry_direct_sum`: SU(2) and SU(3) fund⊗fund — 6/triplet symmetric, 3̄/singlet antisymmetric; `idx_list == [[0,1]]`. **Discovery:** the S_n irrep keys in the inner dict are nested tuples `((partition,),)` (one partition per repeated-irrep group), not bare `(partition,)`. Test expectations adjusted accordingly.
+- [x] `find_plethysms`: SU(2) n=2; SU(3) n=2; SU(3) n=3. **Discovery:** SU(3) fund n=3 has the adjoint (2,1,0) under partition (2,1) with multiplicity **1**, not 2 as the plan originally noted. The factor of 2 in `dim(adjoint) × 2 = 16` comes from `dim((2,1))=2` of S_3, not from the plethysm multiplicity.
+
+8⊗8 ran fast enough (≈0.5s) that `@pytest.mark.slow` was unnecessary.
 
 ## Phase 3: `symmetric_group/` tests (new file `tests/test_symmetric_group.py`)
 
