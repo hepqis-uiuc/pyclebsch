@@ -1,6 +1,7 @@
 # pyclebsch Coverage Improvement
 
 Complexity: medium
+Status: **COMPLETE — all 5 phases done, 193 tests passing (started at 14).**
 
 ## Goal
 
@@ -93,22 +94,15 @@ Note: SKILL.md says "Python 3.14+" but `pyproject.toml` says `>=3.12`; SKILL.md 
 
 ## Phase 5: `matrix_elements/helpers.py` and `lattice_data.py` gap tests
 
-- [ ] `conjugate_iweight`:
-  - `(1,0,0) -> (1,1,0)`, `(1,1,0) -> (1,0,0)`, `(2,1,0) -> (2,1,0)` (self-conjugate), `(0,0,0) -> (0,0,0)`.
-  - Generic check: dimension preserved (`calc_dimension(R) == calc_dimension(conjugate_iweight(R))`).
-- [ ] `get_irreps(max_casimir, N)`:
-  - For SU(3) and `max_casimir=4/3`: returns `{(0,0,0): 0, (1,0,0): 4/3, (1,1,0): 4/3}` (or whatever the code returns — verify and lock in).
-  - Monotonicity: increasing `max_casimir` yields a superset.
-- [ ] `sites_links_and_plaquettes`:
-  - `num_sites=(2,2,1), PBCs=(True,False,False)` yields 4 sites, expected number of links, exactly 2 plaquettes in the (1,2) plane (matches the existing `compute_plaquette_signature` test fixtures).
-  - OBC `num_sites=(3,2,1)`: 6 sites, 2 plaquettes.
-- [ ] `irreps_and_singlets`:
-  - SU(3), `T=1` on a 2-half-link site set: `link_irreps[2]` includes `{(0,0,0), (1,0,0), (1,1,0)}`.
-  - `site_singlets` for a 2-half-link site under T=1: contains the trivial-trivial singlet and 3⊗3̄ singlet with multiplicity 1.
-  - `conj_dict[(1,0,0)]` maps each fundamental basis state to its antifundamental partner with a definite phase (|value|≈1).
-  - Sanity: `irreps_and_singlets` runs without error for `C` and `B` modes on small lattices.
-- [ ] `physical_plaquette_states`:
-  - Smallest case: SU(3), `num_sites=(2,2,1), PBCs=(True,True,False), T=1`. Verify the returned list of 12-tuples is non-empty, every element has the expected length, and the **all-trivial** state appears.
+**Status: COMPLETE.** 29 tests in new `tests/test_helpers.py`; 16 new tests appended to `tests/test_lattice_data.py`. All passing.
+
+- [x] `conjugate_iweight`: parametrized over 10 SU(3) and SU(2) cases; involution check; dimension preservation.
+- [x] `get_irreps`: fundamental Casimir cutoff (3 irreps); adjoint Casimir cutoff (4 irreps — **the 6 is excluded** since its Casimir is 10/3 > 3, plan was wrong here); above-sextet cutoff (6 irreps); monotonicity; zero-cutoff yields trivial only; SU(2) j=1/2 cutoff; values cross-check against `calc_casimir`.
+- [x] `sites_links_and_plaquettes`: 2×2×1 PBC-x (4 sites, 6 links, 2 plaquettes); 3×2×1 OBC (6 sites, 7 links, 2 plaquettes); 2×2×1 PBC-xy (4 sites with 4 half-links each, 8 links, 4 plaquettes); error paths for length-1 PBC axis, zero sites, and bad FORDER.
+- [x] `irreps_and_singlets`: T=1 SU(3) on d=2 PBC 2×2 — `link_irreps[4] = {trivial, fund, afund}`; all-trivial singlet present with multiplicity 1; `conj_dict` covers exactly the irreps in `link_irreps`; trivial maps to `{0: (0, +1)}`; fundamental maps bijectively onto the 3 antifund states with ±1 phases; C-mode and B-mode runs to completion; error paths for invalid truncation mode and invalid N.
+- [x] `physical_plaquette_states`: SU(3) T=1 PBC d=2 2×2 — non-empty list; every element is a 12-tuple with correct slot structure; all-trivial state appears.
+
+**Plan error caught (during writing):** the `(2,0,0)` and `(2,2,0)` 6/6̄ have Casimir 10/3, not below 3, so they are not admitted at `max_casimir=3`. The test that hand-derived this caught the plan's mistake on first execution; corrected expectation locked in.
 
 ## Out of scope
 
