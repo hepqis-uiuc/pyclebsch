@@ -36,21 +36,18 @@ Note: SKILL.md says "Python 3.14+" but `pyproject.toml` says `>=3.12`; SKILL.md 
 
 ## Phase 1: Plaquette matrix element tests (new file `tests/test_plaquette_matrix_elements.py`)
 
-- [ ] Build the file with the same autouse `tmp_path`-based cache fixture used elsewhere.
-  - Acceptance: pytest collects the file and runs it without import errors.
-  - Failure: a test fails because of a real bug in the matrix-element code — escalate, do not silently change the package.
+**Status: COMPLETE.** 2 tests passing.
 
-- [ ] **Shape / non-emptiness smoke test**: on a tiny PBC d=2 lattice (`num_sites=[2,2,1]`, `PBCs=[True,True,False]`, `T=1`, SU(3)), call `calc_plaquette_elements` for every plaquette and verify the result is a non-empty dict whose keys are `(Pf, Pi)` 12-tuples with the expected structure (4 active links + 4 control tuples + 4 multiplicity ints).
-  - Acceptance: non-empty for every plaquette; every key has the documented 12-tuple shape; values are floats.
-  - Failure: returns empty on a clean PBC interior case — escalate.
+- [x] Build the file with module-scoped fixtures for cache redirection (`cgc.set_cache_dir → tmp_path_factory`) and lattice construction (`num_sites=[2,2,1], PBCs=[T,T,F], SU(3), T=1`).
+  - Acceptance met: pytest collects without import errors.
 
-- [ ] **Hermiticity test**: on the same lattice/truncation, for every `(Pf, Pi)` entry, `(Pi, Pf)` is also a key and `|H[Pf,Pi] - H[Pi,Pf]| < 1e-8`.
-  - Acceptance: assertion holds for all entries.
-  - Failure: numerics violate Hermiticity on a clean PBC case — escalate (could indicate a real bug).
+- [x] **Shape / non-emptiness smoke test**: every plaquette yields a non-empty dict; every key is a pair of 12-tuples with 4 active i-weights, 4 control tuples, 4 integer multiplicity indices; every value is a float.
+  - Acceptance met.
 
-- [ ] **`parallelize=False` path**: same lattice, call with `parallelize=False`; result should equal the parallel result entry-for-entry (within `1e-10`). Guards against accidental divergence between the two code paths.
-  - Acceptance: dicts compare equal up to numerical tolerance.
-  - Failure: paths diverge — escalate.
+- [x] **`parallelize=True` vs `parallelize=False` consistency**: identical dicts (`math.isclose`, `abs_tol=1e-10`) across both paths for every plaquette.
+  - Acceptance met.
+
+- [~] ~~Hermiticity / orientation-reversal symmetry test~~: **dropped per user decision.** Strict Hermiticity does not hold because `calc_plaquette_elements` returns matrix elements of the unitary Wilson loop `U_□`, not the Hermitian Hamiltonian. The naive per-position active-link conjugation symmetry (`<Pf|U|Pi> == <P̄i|U|P̄f>`) holds only on vacuum-endpoint entries; deriving the full symmetry would require accounting for FORDER reversal in the per-site control orderings under direction reversal, which is out of scope for a coverage task.
 
 ## Phase 2: `su_n_operators.py` tests (new file `tests/test_su_n_operators.py`)
 

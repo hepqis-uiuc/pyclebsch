@@ -1,13 +1,8 @@
 # Overview: pyclebsch Coverage Improvement
 
-**Status: awaiting approval.** Plan drafted at `plan.md` with 5 phases:
+**Status: Phase 1 complete. Phases 2–5 not started.**
 
-1. New `tests/test_plaquette_matrix_elements.py` — shape, Hermiticity, and `parallelize=False` checks on a tiny PBC d=2 lattice.
-2. New `tests/test_su_n_operators.py` covering dim/casimir/Dynkin/GT-patterns/ladder ops/direct-sum/plethysms.
-3. New `tests/test_symmetric_group.py` covering partitions, tableaux, hook lengths, Young symmetrizer.
-4. Extend `cgc.py` tests: return-shape filtering, lower-weight path, `print_cgcs` smoke, singlet phase convention.
-5. Fill gaps in `matrix_elements/`: `helpers.py`, `sites_links_and_plaquettes`, `irreps_and_singlets`, `physical_plaquette_states`.
+- **Phase 1 (DONE)** — `tests/test_plaquette_matrix_elements.py` added with two tests: shape/structure smoke test and `parallelize=True/False` consistency. Both pass. The originally-planned Hermiticity/symmetry test was dropped after investigation showed the function returns matrix elements of the unitary Wilson loop (not Hermitian) and that the full orientation-reversal symmetry interacts with FORDER in ways beyond Phase 1 scope. Full suite: 16/16 passing.
+- **Phases 2–5** — not started. Plan unchanged at `plan.md`.
 
-No package code changes are planned. Tests will redirect CGC cache to `tmp_path` via an autouse fixture so the on-disk cache isn't polluted. Slow CGC computations marked `@pytest.mark.slow`.
-
-Next: user reviews `plan.md` and approves before any implementation begins.
+Next: await user direction on whether to proceed to Phase 2 (new `tests/test_su_n_operators.py`).
