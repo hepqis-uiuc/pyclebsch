@@ -80,18 +80,16 @@ Note: SKILL.md says "Python 3.14+" but `pyproject.toml` says `>=3.12`; SKILL.md 
   - Full symmetric/antisymmetric tableaux for n=2, n=3 — exact coefficients and signs verified against `(1/n!)·Σ_p (sgn?) [P]`.
   - **Idempotency Y² = Y verified on 8 tableaux** covering: pure symmetric, pure antisymmetric, row-ordered mixed `[[0,1],[2]]`, **non-row/column-ordered mixed `[[0,2],[1]]`** (exercises the MOLD descent branch), and n=4 cases `[[0,1,2],[3]]` and `[[0,1],[2,3]]`. Group-algebra composition implemented in test helper `_compose_symmetrizers`.
 
-## Phase 4: `cgc.py` extended tests (extend `tests/test_cgc_cache.py` or new `tests/test_cgc_api.py`)
+## Phase 4: `cgc.py` extended tests (new file `tests/test_cgc_api.py`)
 
-- [ ] `calc_cgcs` return-shape filtering:
-  - No optional args → outer dict keyed by sum irreps; for SU(3) 3⊗3̄, contains `(2,1,0)` and `(0,0,0)`.
-  - With `sum_iweight=(0,0,0)` → dict keyed by mult indices.
-  - With `mult_idx=1` → dict keyed by sum states.
-  - With `sum_state=0` → dict keyed by product-state tuples.
-  - All four args → float.
-- [ ] Singlet check: for 3⊗3̄ in SU(3), the singlet CGCs (sum=(0,0,0), mult=1) over the diagonal of (state, conjugate-state) should equal `1/sqrt(3)` up to phase, all with the same sign (phase convention).
-- [ ] `check_cgcs` returns `True` for SU(2) `[(1,0),(1,0)]` and SU(3) `[(1,0,0),(1,1,0)]`. Mark slow if too expensive.
-- [ ] `print_cgcs` smoke test: capture stdout (`capsys`), assert non-empty output for a small case. (Avoids regression where formatting crashes.)
-- [ ] Lower-weight algorithm path: for SU(3) 3⊗3 → 6, request `calc_cgcs([(1,0,0),(1,0,0)], (2,0,0), mult_idx=1, sum_state=k)` for k=0 and k=last; verify magnitudes (sum of squares of CGCs for a given sum_state == 1).
+**Status: COMPLETE.** 21 tests passing.
+
+- [x] `calc_cgcs` return-shape filtering: 5 levels (0..4 optional args), each verified to return the correct dict-of-dict-of-dict structure or float; sum irreps `{(2,1,0), (0,0,0)}` for 3⊗3̄; multiplicity 1 for both.
+- [x] Error paths: invalid `sum_state` raises `ValueError`; product_state with no CGC returns `0` (not `KeyError`).
+- [x] Singlet checks for SU(3) 3⊗3̄: exactly 3 nonzero CGCs; each has magnitude 1/√3; Σ|CGC|² = 1; smallest tuple-ordered product_state has positive CGC (phase convention from source's phase-fix step).
+- [x] `check_cgcs` for SU(2) 2⊗2 (SU(3) 3⊗3̄ and 8⊗8 already covered in `test_cgc_cache.py`).
+- [x] `print_cgcs` smoke tests: captures stdout via `capsys`, asserts non-empty output and the presence of expected formatting markers (the `#` banner, "decomposition state:") at each of the 5 filter levels.
+- [x] Lower-weight algorithm path: SU(3) 3⊗3 → 6 has 6 sum_states 0..5; orthonormality (Σ|CGC|² = 1) holds for every sum_state including the lowest-weight one (verifies the lower-weight descent end-to-end); 3⊗3 → 3̄ similarly has 3 sum_states.
 
 ## Phase 5: `matrix_elements/helpers.py` and `lattice_data.py` gap tests
 
