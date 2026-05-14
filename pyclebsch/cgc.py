@@ -8,6 +8,7 @@ from pathlib import Path
 from pickle import load, dump
 
 from pyclebsch.su_n_operators import (
+    normalize_iweight,
     calc_dimension,
     calc_weight,
     find_gt_patterns,
@@ -15,6 +16,7 @@ from pyclebsch.su_n_operators import (
     find_symmetry_direct_sum,
     ladder_op,
 )
+from pyclebsch.symmetric_group import calc_Sn_dimension
 from pyclebsch.symmetric_group.tableaux import find_tableaux
 from pyclebsch.symmetric_group.young_symmetrizer import young_symmetrizer
 
@@ -46,7 +48,7 @@ def _resolve_cache_dir() -> Path | None:
 
 
 def calc_highest_weight_cgcs(
-    product_iweights: list[tuple], sum_iweight: tuple, multiplicity: int
+    product_iweights: list[tuple], sum_iweight: tuple
 ) -> dict[int, dict[tuple, float]]:
     """Calculates the Clebsch-Gordan Coefficients for the highest-weight state
     of an irrep (sum_iweight) appearing in the direct-sum decomposition of a
@@ -59,29 +61,33 @@ def calc_highest_weight_cgcs(
     ~Eqs. (33)-(34) and Pg. 13
     """
 
-    # Return CGCs if already computed.
+    # Normalize sum_iweight to sum_irrep. Return CGCs if already computed.
 
+    sum_irrep = normalize_iweight(sum_iweight)
     cache_dir = _resolve_cache_dir()
     if cache_dir is not None:
-        highest_weight_cgc_data_path = cache_dir / str(product_iweights) / ('highest_weight_CGC_' + str(sum_iweight))
+        highest_weight_cgc_data_path = cache_dir / str(product_iweights) / ('highest_weight_CGC_' + str(sum_irrep))
         if highest_weight_cgc_data_path.exists():
             with open(highest_weight_cgc_data_path, 'rb') as fp:
                 return load(fp)
 
     # Gather initial data. The GT-pattern for the highest-weight state
-    # of sum_iweight can be manually made. gt_patterns is a dictionary
+    # of sum_irrep can be manually made. gt_patterns is a dictionary
     # of GT-patterns for basis states of irreps in product_iweights.
 
-    N = len(sum_iweight)
-    highest_weight_state = [[sum_iweight[i] for i in range(j)] for j in range(N,0,-1)]
+    N = len(sum_irrep)
+    highest_weight_state = [[sum_irrep[i] for i in range(j)] for j in range(N,0,-1)]
     highest_weight = calc_weight(highest_weight_state, 'z')
     gt_patterns = {R: find_gt_patterns(R) for R in set(product_iweights)}
 
-    # Sn_irreps gives the symmetric group irreps the CGCs of sum_iweight
+    # Sn_irreps gives the symmetric group irreps the CGCs of sum_irrep
     # should transform under. idx_list are the indices each irrep acts on.
+    # multiplicity is the number of sum_irrep copies in product_iweights.
     # tableaux_cache stores necessary standard Young tableaux.
 
-    Sn_irreps, idx_list = find_symmetry_direct_sum(product_iweights, sum_iweight)
+    Sn_irreps, idx_list = find_symmetry_direct_sum(product_iweights, sum_irrep)
+    multiplicity = sum(np.prod([calc_Sn_dimension(irrep) for irrep in partitions])*mult for partitions, mult in Sn_irreps.items())
+    if multiplicity==0: raise ValueError('sum_iweight not in product_iweights decomposition.')
     Sn_irrep_set = set(partition for partitions in Sn_irreps for partition in partitions)
     tableaux_cache = {partition: find_tableaux(list(partition)) for partition in Sn_irrep_set}
 
@@ -433,46 +439,51 @@ def calc_highest_weight_cgcs(
     # Save CGCs.
 
     if cache_dir is not None:
-        highest_weight_cgc_data_path = cache_dir / str(product_iweights) / ('highest_weight_CGC_' + str(sum_iweight))
+        highest_weight_cgc_data_path = cache_dir / str(product_iweights) / ('highest_weight_CGC_' + str(sum_irrep))
         highest_weight_cgc_data_path.parent.mkdir(parents=True, exist_ok=True)
         with open(highest_weight_cgc_data_path, 'wb') as fp:
             dump(cgc_dict, fp)
 
     return cgc_dict
 
-def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight_mult_idx: tuple[tuple, int], highest_dict: dict[tuple, float]) -> dict[int, dict[tuple, float]]:
+
+def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, mult_idx: int) -> dict[int, dict[tuple, float]]:
     """Calculates the Clebsch-Gordan Coefficients for all lower-weight states
     of an irrep (sum_iweight, mult_idx) appearing in the direct-sum
-    decomposition of a direct product of irreps (product_iweights). The CGCs
-    for the highest-weight state of the irrep (highest_dict) is required.
+    decomposition of a direct product of irreps (product_iweights).
     Returns a dictionary whose keys enumerate the states of sum_iweight
     (highest to lowest weight), and whose values are dictionaries of the
     form {product basis state: CGC}.
     ~Pg. 14
     """
 
-    sum_iweight, _ = sum_iweight_mult_idx
+    # Normalize sum_iweight to sum_irrep. Return CGCs if already computed.
 
-    # Return CGCs if already computed.
-
+    sum_irrep = normalize_iweight(sum_iweight)
     cache_dir = _resolve_cache_dir()
     if cache_dir is not None:
-        lower_weight_cgc_data_path = cache_dir / str(product_iweights) / f'lower_weight_CGC_{sum_iweight_mult_idx}'
+        lower_weight_cgc_data_path = cache_dir / str(product_iweights) / f'lower_weight_CGC_{(sum_irrep, mult_idx)}'
         if lower_weight_cgc_data_path.exists():
             with open(lower_weight_cgc_data_path, 'rb') as fp:
                 return load(fp)
 
-    # Gather initial data. gt_patterns is a dictionary of GT-patterns for 
-    # basis states of irreps in product_iweights as well as sum_iweight.
-    # pweights contains the p-weights for the basis states of sum_iweight.
-    # inner_mults gives the inner multiplicities of sum_iweight p-weights. 
+    # The CGCs for the highest-weight state of sum_irrep are required.
+    try:
+        highest_dict = calc_highest_weight_cgcs(product_iweights, sum_irrep)[mult_idx]
+    except KeyError:
+        raise ValueError('Invalid mult_idx.')
 
-    N = len(sum_iweight)
-    gt_patterns = {R: find_gt_patterns(R) for R in set(product_iweights + [sum_iweight])}
-    pweights = {gt_patterns[sum_iweight].index(gt): tuple(calc_weight(gt,'p')) for gt in gt_patterns[sum_iweight]}
+    # Gather initial data. gt_patterns is a dictionary of GT-patterns for 
+    # basis states of irreps in product_iweights as well as sum_irrep.
+    # pweights contains the p-weights for the basis states of sum_irrep.
+    # inner_mults gives the inner multiplicities of sum_irrep p-weights. 
+
+    N = len(sum_irrep)
+    gt_patterns = {R: find_gt_patterns(R) for R in set(product_iweights + [sum_irrep])}
+    pweights = {gt_patterns[sum_irrep].index(gt): tuple(calc_weight(gt,'p')) for gt in gt_patterns[sum_irrep]}
     inner_mults = Counter(pweights.values())
 
-    # When J(k)- is applied on a state S of sum_iweight, a linear combination
+    # When J(k)- is applied on a state S of sum_irrep, a linear combination
     # of states generally appears. Let S' be one of those states. Call S the
     # parent of the child S'. parent_dict is a nested dictionary of parents and
     # their children, arranged for later convenience. It has the form
@@ -481,17 +492,17 @@ def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight_mult_idx: 
     # multiple children with the same weight, hence the final list of tuples.
 
     parent_dict = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-    for pat in gt_patterns[sum_iweight]:
-        parent = gt_patterns[sum_iweight].index(pat)
+    for pat in gt_patterns[sum_irrep]:
+        parent = gt_patterns[sum_irrep].index(pat)
         for k in range(N-1,0,-1):
             for coeff,child_in_list in ladder_op([pat], k, '-'):
-                child = gt_patterns[sum_iweight].index(child_in_list[0])
+                child = gt_patterns[sum_irrep].index(child_in_list[0])
                 child_weight = pweights[child]
                 parent_dict[child_weight][parent][k].append((coeff, child))
 
     cgc_dict = {}
 
-    # There are potentially multiple sum_iweight states that have the same
+    # There are potentially multiple sum_irrep states that have the same
     # p-weight. These states have a set of parents from different J(k)- operators.
     # Over the course of this for-loop, the CGCs of those parents will be found.
     # Then for a given p-weight, gather all the parent states P. Apply the
@@ -503,7 +514,7 @@ def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight_mult_idx: 
     for pweight in inner_mults:
 
         # For the highest-weight state, simply use highest_dict.
-        if pweight==sum_iweight:
+        if pweight==sum_irrep:
             cgc_dict[0] = highest_dict
         else:
             # The relevant sum (lhs) and product (rhs) basis states
@@ -572,7 +583,7 @@ def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight_mult_idx: 
     # Save CGCs.
 
     if cache_dir is not None:
-        lower_weight_cgc_data_path = cache_dir / str(product_iweights) / f'lower_weight_CGC_{sum_iweight_mult_idx}'
+        lower_weight_cgc_data_path = cache_dir / str(product_iweights) / f'lower_weight_CGC_{(sum_irrep, mult_idx)}'
         lower_weight_cgc_data_path.parent.mkdir(parents=True, exist_ok=True)
         with open(lower_weight_cgc_data_path, 'wb') as fp:
             dump(cgc_dict, fp)
@@ -593,10 +604,9 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     product_iweights are sorted; computed CGCs are then returned with
     product basis states unsorted according to the input product_iweights.
     """
-    # Get direct-sum decomposition and normalize product_iweights.
+    # Normalize product_iweights.
     N = len(product_iweights[0])
-    decomposition = find_direct_sum(product_iweights)
-    normalized_iweights = [tuple(j-iweight[-1] for j in iweight) for iweight in product_iweights]
+    normalized_iweights = [normalize_iweight(iweight) for iweight in product_iweights]
     
     # Sort nontrivial iweights. Trivial irreps can be appended later.
     # product_irreps contains the direct product CGCs will be calculated for.
@@ -639,49 +649,38 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
 
     # Returns specific CGC of a product basis state.
     if None not in {sum_iweight,mult_idx,sum_state,product_state}:
-        multiplicity = decomposition[sum_iweight]
-        highest_dict = calc_highest_weight_cgcs(product_irreps, sum_iweight, multiplicity)
-        if sum_state==0:
-            highest_dict = {reorder(P): highest_dict[mult_idx][P] for P in highest_dict[mult_idx]}
-            if product_state in highest_dict:
-                return highest_dict[product_state]
-            else:
-                return 0
-        else:
-            lower_dict = calc_lower_weight_cgcs(product_irreps, (sum_iweight,mult_idx), highest_dict[mult_idx])
+        try:
+            lower_dict = calc_lower_weight_cgcs(product_irreps, sum_iweight, mult_idx)
             lower_dict = {reorder(P): lower_dict[sum_state][P] for P in lower_dict[sum_state]}
             if product_state in lower_dict:
                 return lower_dict[product_state]
             else:
                 return 0
-
+        except KeyError:
+            raise ValueError('Invalid sum_state.')
+    
     # Returns CGCs of a sum basis state.
     elif None not in {sum_iweight,mult_idx,sum_state}:
-        multiplicity = decomposition[sum_iweight]
-        highest_dict = calc_highest_weight_cgcs(product_irreps, sum_iweight, multiplicity)
-        if sum_state==0:
-            highest_dict = {reorder(P): highest_dict[mult_idx][P] for P in highest_dict[mult_idx]}
-            return highest_dict
-        else:
-            lower_dict = calc_lower_weight_cgcs(product_irreps, (sum_iweight,mult_idx), highest_dict[mult_idx])
+        try:
+            lower_dict = calc_lower_weight_cgcs(product_irreps, sum_iweight, mult_idx)
             lower_dict = {reorder(P): lower_dict[sum_state][P] for P in lower_dict[sum_state]}
             return lower_dict
-
+        except KeyError:
+            raise ValueError('Invalid sum_state.')
+    
     # Returns CGCs of a direct-sum irrep.
     elif None not in {sum_iweight,mult_idx}:
-        multiplicity = decomposition[sum_iweight]
-        highest_dict = calc_highest_weight_cgcs(product_irreps, sum_iweight, multiplicity)
-        lower_dict = calc_lower_weight_cgcs(product_irreps, (sum_iweight,mult_idx), highest_dict[mult_idx])
+        lower_dict = calc_lower_weight_cgcs(product_irreps, sum_iweight, mult_idx)
         lower_dict = {S: {reorder(P): lower_dict[S][P] for P in lower_dict[S]} for S in lower_dict}
         return lower_dict
-
+    
     # Returns CGCs of a direct-sum i-weight.
     elif sum_iweight is not None:
         cgc_dict = {}
-        multiplicity = decomposition[sum_iweight]
-        highest_dict = calc_highest_weight_cgcs(product_irreps, sum_iweight, multiplicity)
+        multiplicity = find_direct_sum(product_iweights, sum_iweight)
+        if multiplicity==0: raise ValueError('sum_iweight not in product_iweights decomposition.')
         for a in range(1,multiplicity+1):
-            lower_dict = calc_lower_weight_cgcs(product_irreps, (sum_iweight,a), highest_dict[a])
+            lower_dict = calc_lower_weight_cgcs(product_irreps, sum_iweight, a)
             lower_dict = {S: {reorder(P): lower_dict[S][P] for P in lower_dict[S]} for S in lower_dict}
             cgc_dict[a] = lower_dict
         return cgc_dict
@@ -689,11 +688,11 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     # Returns all CGCs.
     else:
         cgc_dict = defaultdict(dict)
+        decomposition = find_direct_sum(product_iweights)
         for sum_irrep in decomposition:
             multiplicity = decomposition[sum_irrep]
-            highest_dict = calc_highest_weight_cgcs(product_irreps, sum_irrep, multiplicity)
             for a in range(1,multiplicity+1):
-                lower_dict = calc_lower_weight_cgcs(product_irreps, (sum_irrep,a), highest_dict[a])
+                lower_dict = calc_lower_weight_cgcs(product_irreps, sum_irrep, a)
                 lower_dict = {S: {reorder(P): lower_dict[S][P] for P in lower_dict[S]} for S in lower_dict}
                 cgc_dict[sum_irrep][a] = lower_dict
         return dict(cgc_dict)

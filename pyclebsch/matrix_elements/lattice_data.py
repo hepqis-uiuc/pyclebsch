@@ -369,7 +369,7 @@ def irreps_and_singlets(N, sites, truncation_mode, cutoff):
     # these coefficients. (st=state, cst=conjugate state)
     all_irreps = sorted(set().union(*link_irreps.values()))
     for R in all_irreps:
-        inv_cgcs = calc_cgcs([R, conjugate_irrep(R)], trivial_rep, 1, 0)
+        inv_cgcs = calc_cgcs([R, conjugate_iweight(R)], trivial_rep, 1, 0)
         conj_dict[R] = {st: (cst, np.sign(inv_cgcs[(st,cst)])) for st,cst in inv_cgcs}
 
     return link_irreps, site_singlets, conj_dict
@@ -461,7 +461,7 @@ def physical_plaquette_states(P, sites, plaquettes, singlets, FORDER) -> list[Pl
                 if hlinks[i]<0:
                     site.append(S[i])
                 else:
-                    site.append(conjugate_irrep(S[i]))
+                    site.append(conjugate_iweight(S[i]))
             s1.append((tuple(site), G))
 
     # s2
@@ -478,7 +478,7 @@ def physical_plaquette_states(P, sites, plaquettes, singlets, FORDER) -> list[Pl
                 if hlinks[i]<0:
                     site.append(S[i])
                 else:
-                    site.append(conjugate_irrep(S[i]))
+                    site.append(conjugate_iweight(S[i]))
 
             for s,g in s1:
                 if s2_has_BCs and site[i_ctrl_idxs[2][0]]!=s[i_ctrl_idxs[1][0]]:
@@ -503,7 +503,7 @@ def physical_plaquette_states(P, sites, plaquettes, singlets, FORDER) -> list[Pl
                 if hlinks[i]<0:
                     site.append(S[i])
                 else:
-                    site.append(conjugate_irrep(S[i]))
+                    site.append(conjugate_iweight(S[i]))
 
             for site1,site2 in s2:
                 s,g = site2
@@ -529,7 +529,7 @@ def physical_plaquette_states(P, sites, plaquettes, singlets, FORDER) -> list[Pl
                 if hlinks[i]<0:
                     site.append(S[i])
                 else:
-                    site.append(conjugate_irrep(S[i]))
+                    site.append(conjugate_iweight(S[i]))
 
             for site1,site2,site3 in s3:
                 s,g1 = site1

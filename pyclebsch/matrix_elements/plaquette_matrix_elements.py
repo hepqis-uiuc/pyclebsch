@@ -8,7 +8,7 @@ from ..cgc import calc_cgcs
 from itertools import product
 from multiprocessing import Pool
 from collections import defaultdict
-from .helpers import conjugate_irrep
+from .helpers import conjugate_iweight
 from ..su_n_operators import calc_dimension, find_direct_sum
 
 def plaquette_site_factor(N, s, initial, final, URij, ij_idxs, ctrl_irreps, conj_dict, EPS):
@@ -177,7 +177,7 @@ def calc_plaquette_site_factors(N, P, sites, plaquettes, truncation_irreps, sing
     plane, half_link_dirs_per_site = signature
     site_factors, site_factor_args = defaultdict(dict), []
     fund = tuple(1 if i==0 else 0 for i in range(N))
-    afund = conjugate_irrep(fund)
+    afund = conjugate_iweight(fund)
 
     # Pre-compute the allowed direct-sum irreps when tensoring an irrep from
     # truncation_irreps with either the fundamental or antifundamental representations.
@@ -202,14 +202,14 @@ def calc_plaquette_site_factors(N, P, sites, plaquettes, truncation_irreps, sing
         # A "re" prefix means "real"; the real lattice irrep is conjugated
         # relative to how it appears in a singlet.
         for C in singlet_irreps:
-            ctrl_irreps = tuple(C[i] if ctrl_idxs[i][1]<0 else conjugate_irrep(C[i]) for i in range(len(C)))
+            ctrl_irreps = tuple(C[i] if ctrl_idxs[i][1]<0 else conjugate_iweight(C[i]) for i in range(len(C)))
             for plinks in singlet_irreps[C]:
                 Rii,Rji = plinks
-                reRii = conjugate_irrep(Rii) if Ri_conj else Rii
-                reRji = conjugate_irrep(Rji) if Rj_conj else Rji
+                reRii = conjugate_iweight(Rii) if Ri_conj else Rii
+                reRji = conjugate_iweight(Rji) if Rj_conj else Rji
                 for reRif,reRjf in product(i_decomp[reRii], j_decomp[reRji]):
-                    Rif = conjugate_irrep(reRif) if Ri_conj else reRif
-                    Rjf = conjugate_irrep(reRjf) if Rj_conj else reRjf
+                    Rif = conjugate_iweight(reRif) if Ri_conj else reRif
+                    Rjf = conjugate_iweight(reRjf) if Rj_conj else reRjf
                     if (Rif,Rjf) not in singlet_irreps[C]: continue
                     for Gi,Gf in product(range(singlet_irreps[C][(Rii,Rji)]), range(singlet_irreps[C][(Rif,Rjf)])):
                         singleti, singletf, c_count = [], [], 0
