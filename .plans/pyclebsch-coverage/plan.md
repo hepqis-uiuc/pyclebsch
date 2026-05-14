@@ -69,21 +69,16 @@ Note: SKILL.md says "Python 3.14+" but `pyproject.toml` says `>=3.12`; SKILL.md 
 
 ## Phase 3: `symmetric_group/` tests (new file `tests/test_symmetric_group.py`)
 
-- [ ] `find_partitions(n)`:
-  - `n=0` → `[[]]` or `[[0]]` (verify exact behavior in source first; encode whatever it actually does as the spec).
-  - `n=4` → `[[4],[3,1],[2,2],[2,1,1],[1,1,1,1]]`.
-  - `len(list(find_partitions(n)))` matches OEIS partition counts for small n (e.g. n=5 → 7, n=6 → 11).
-- [ ] `find_tableaux(partition)`:
-  - `[3]` → 1 tableau (single row); `[1,1,1]` → 1 tableau (single column); `[2,1]` → 2 tableaux.
-  - `[2,2]` → 2 tableaux; `[3,1]` → 3 tableaux.
-  - Cell values are 0-indexed and exactly the set `{0,...,n-1}`.
-- [ ] `partition_to_sequence` / `sequence_to_partition`: round-trip on `[3,2,1]`, `[4]`, `[1,1,1,1]`.
-- [ ] `_product_of_hook_lengths` (already imported in `test_lattice_data.py`'s helper): verify against the hook length formula. `[2,1]` → `3·1·1 = 3`; `[3,1]` → `4·2·1·1 = 8`; `[2,2]` → `3·2·2·1 = 12`. Hook length formula: `dim(S_n irrep) = n! / hook_product`. Test that this gives integer dimensions matching known values: `[2,1]` → 2, `[3,1]` → 3, `[2,2]` → 2.
-- [ ] `young_symmetrizer`:
-  - Trivial partition `[1]` (n=1): yields the identity permutation with coefficient 1.
-  - Symmetric tableau `[[0,1]]` for n=2: idempotent — applying it twice (in coefficient algebra) reproduces it. Check by exhausting the generator into a dict `{perm: coeff}` and verifying it's the (1/2)(e + (01)) symmetrizer up to normalization stated in the source.
-  - Antisymmetric tableau `[[0],[1]]` for n=2: produces (1/2)(e - (01)).
-  - Idempotency check for `[2,1]` standard tableaux.
+**Status: COMPLETE.** 61 tests passing.
+
+- [x] `find_partitions(n)`: count matches OEIS A000041 for n=0..7; exact content for n=4; descending-order invariant; sum-to-n invariant; n=0 yields `[[0]]` (algorithm quirk documented).
+- [x] `find_tableaux(partition)`: count vs. hook-length formula `n!/Π(hooks)` (parametrized over [2,1], [3,1], [2,2], [3,2,1], [4,2]); standalone count assertions for 11 partitions including the 1D edge cases; cell-value set check; row/column strict-increase check; exact content for [2,1]; `ValueError` on unsorted partition input.
+- [x] `partition_to_sequence` / `sequence_to_partition`: round-trip across 6 partitions plus explicit expected sequences for `[3,2,1]`, `[4]`, `[1,1,1,1]`.
+- [x] `_product_of_hook_lengths`: hand-verified hook products for 8 partitions including `[2,1]→3`, `[3,1]→8`, `[2,2]→12`, `[4]→24`.
+- [x] `young_symmetrizer`:
+  - Trivial n=1 yields `{(0,): 1.0}`.
+  - Full symmetric/antisymmetric tableaux for n=2, n=3 — exact coefficients and signs verified against `(1/n!)·Σ_p (sgn?) [P]`.
+  - **Idempotency Y² = Y verified on 8 tableaux** covering: pure symmetric, pure antisymmetric, row-ordered mixed `[[0,1],[2]]`, **non-row/column-ordered mixed `[[0,2],[1]]`** (exercises the MOLD descent branch), and n=4 cases `[[0,1,2],[3]]` and `[[0,1],[2,3]]`. Group-algebra composition implemented in test helper `_compose_symmetrizers`.
 
 ## Phase 4: `cgc.py` extended tests (extend `tests/test_cgc_cache.py` or new `tests/test_cgc_api.py`)
 
