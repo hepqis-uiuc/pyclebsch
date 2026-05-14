@@ -13,6 +13,13 @@ from pyclebsch.symmetric_group.tableaux import find_partitions
 
 type IrrepWeight = tuple[int, int, ...] # Length N corresponds to SU(N) iweight.
 
+def normalize_iweight(iweight: IrrepWeight) -> IrrepWeight:
+    """Returns normalized i-weight.
+    """
+    
+    last = iweight[-1]
+    return tuple(j - last for j in iweight)
+
 def calc_dimension(iweight: IrrepWeight) -> int:
     """Returns dimension of an irrep.
     ~Eq. (22)
@@ -31,7 +38,7 @@ def calc_casimir(iweight: IrrepWeight) -> float:
     """
 
     N = len(iweight)
-    R = [j-iweight[-1] for j in iweight]
+    R = normalize_iweight(iweight)
 
     res = N*sum(R[i]*(R[i] + N - 1 - 2*i) for i in range(N))
     res -= sum(R)**2
@@ -44,7 +51,7 @@ def calc_dynkin_index(iweight: IrrepWeight) -> float:
     """
 
     N = len(iweight)
-    R = [j-iweight[-1] for j in iweight]
+    R = normalize_iweight(iweight)
 
     cas = N*sum(R[i]*(R[i] + N - 1 - 2*i) for i in range(N))
     cas -= sum(R)**2
@@ -353,7 +360,7 @@ def find_direct_sum(product_iweights: list[IrrepWeight], sum_iweight: Optional[I
     # are then sorted lexicographically for neatness.
 
     if sum_iweight is not None:
-        sum_irrep = tuple(j-sum_iweight[-1] for j in sum_iweight)
+        sum_irrep = normalize_iweight(sum_iweight)
         return direct_sum.count(sum_irrep)
     else:
         direct_sum = Counter(direct_sum)
@@ -413,7 +420,7 @@ def find_symmetry_direct_sum(product_iweights: list[IrrepWeight], sum_iweight: O
                 for sum_irrep in decomp:
                     direct_sum[sum_irrep][partitions] += decomp[sum_irrep]*mult
     else:
-        sum_irrep = tuple(j-sum_iweight[-1] for j in sum_iweight)
+        sum_irrep = normalize_iweight(sum_iweight)
         for irreps in product(*(plethysms[R] for R in plethysms)):
             if len(irreps)==1:
                 if irreps[0]==sum_irrep:
