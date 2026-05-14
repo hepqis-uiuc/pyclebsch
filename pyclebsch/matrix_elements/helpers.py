@@ -4,14 +4,14 @@ HELPER FUNCTIONS
 
 import numpy as np
 from itertools import combinations_with_replacement
-from ..su_n_operators import calc_casimir
+from ..su_n_operators import calc_casimir, IrrepWeight
 
-def conjugate_irrep(R: tuple) -> tuple:
-    """
-    Returns the conjugate irrep given an i-weight, R.
+def conjugate_iweight(iweight: IrrepWeight) -> IrrepWeight:
+    """Returns i-weight corresponding to the conjugate irrep.
     """
 
-    return tuple(R[0]-i for i in R[::-1])
+    first,last = iweight[0],iweight[-1]
+    return tuple(first - j + last for j in iweight[::-1])
 
 def get_irreps(max_casimir: int | float, N: int) -> dict[tuple, float]:
     """
