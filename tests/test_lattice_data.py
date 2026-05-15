@@ -1,13 +1,31 @@
 import pytest
+
+import pyclebsch.cgc as cgc
 from pyclebsch.matrix_elements.lattice_data import (
     LatticeDef,
     LinkDirection,
     PlaquetteAddress,
     PlaquetteSignature,
     compute_plaquette_signature,
+    irreps_and_singlets,
+    physical_plaquette_states,
+    sites_links_and_plaquettes,
 )
 
 FORDER: list[LinkDirection] = [1, 2, 3, -1, -2, -3]
+
+
+@pytest.fixture(autouse=True)
+def restore_cache_dir():
+    """Save/restore the CGC cache dir around each test.
+
+    Tests that compute CGCs (irreps_and_singlets / physical_plaquette_states)
+    should call cgc.set_cache_dir(tmp_path / "CGC_Data") at the top to redirect
+    writes; other tests are unaffected.
+    """
+    original = cgc.get_cache_dir()
+    yield
+    cgc.set_cache_dir(original)
 
 
 def test_lattice_def_planes():
@@ -327,3 +345,210 @@ def test_compute_plaquette_signature():
                     assert computed_signatures[expected_plaquette_address] == expected_plaquette_signature, f"{dim_str}, {lattice_str} (non-strict test) yielded unexpected signature at site {current_site}.\nExpected: {expected_plaquette_signature}\nEncountered: {computed_signatures[expected_plaquette_address]}"
             for impossible_plaquette_address, empty_signature_result in current_test_data['expected_empty_signatures'].items():
                 assert compute_plaquette_signature(impossible_plaquette_address, current_test_data['lattice']) == empty_signature_result
+
+
+# ===========================================================================
+# sites_links_and_plaquettes
+# ===========================================================================
+
+def test_sites_links_and_plaquettes_2x2x1_pbc_x():
+    """num_sites=(2,2,1) with PBC only along x: 4 sites, 6 links, 2 plaquettes."""
+    sites, links, plaquettes = sites_links_and_plaquettes(
+        (2, 2, 1), (True, False, False), FORDER
+    )
+    assert len(sites) == 4
+    assert set(sites.keys()) == {(0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0)}
+    assert len(links) == 6
+    assert len(plaquettes) == 2
+    expected_plaq_keys = {((0, 0, 0), (1, 2)), ((1, 0, 0), (1, 2))}
+    assert set(plaquettes.keys()) == expected_plaq_keys
+
+
+def test_sites_links_and_plaquettes_3x2x1_obc():
+    """num_sites=(3,2,1) with all OBC: 6 sites, 7 links, 2 plaquettes."""
+    sites, links, plaquettes = sites_links_and_plaquettes(
+        (3, 2, 1), (False, False, False), FORDER
+    )
+    assert len(sites) == 6
+    assert len(links) == 7
+    assert len(plaquettes) == 2
+
+
+def test_sites_links_and_plaquettes_2x2x1_pbc_xy():
+    """d=2 PBC 2x2: 4 sites with 4 half-links each, 8 links, 4 plaquettes."""
+    sites, links, plaquettes = sites_links_and_plaquettes(
+        (2, 2, 1), (True, True, False), FORDER
+    )
+    assert len(sites) == 4
+    for half_links in sites.values():
+        assert sorted(half_links) == [-2, -1, 1, 2]
+    assert len(links) == 8
+    assert len(plaquettes) == 4
+
+
+def test_sites_links_and_plaquettes_rejects_obc_axis_of_length_one_with_pbc():
+    """PBC on an axis with only 1 site must raise ValueError."""
+    with pytest.raises(ValueError):
+        sites_links_and_plaquettes((2, 2, 1), (False, False, True), FORDER)
+
+
+def test_sites_links_and_plaquettes_rejects_zero_sites():
+    """num_sites entries must be at least 1."""
+    with pytest.raises(ValueError):
+        sites_links_and_plaquettes((0, 1, 1), (False, False, False), FORDER)
+
+
+def test_sites_links_and_plaquettes_rejects_bad_forder():
+    """FORDER must be a permutation of [1,2,3,-1,-2,-3]."""
+    with pytest.raises(ValueError):
+        sites_links_and_plaquettes(
+            (2, 2, 1), (True, False, False), [1, 2, 3, 4, 5, 6]
+        )
+
+
+# ===========================================================================
+# irreps_and_singlets
+# ===========================================================================
+
+def _build_d2_pbc_2x2_sites():
+    sites, _, _ = sites_links_and_plaquettes((2, 2, 1), (True, True, False), FORDER)
+    return sites
+
+
+def test_irreps_and_singlets_su3_t1_d2_link_irreps(tmp_path):
+    """T=1, SU(3): admitted irreps at each 4-link site are {trivial, fund, afund}."""
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    sites = _build_d2_pbc_2x2_sites()
+    link_irreps, _site_singlets, _conj_dict = irreps_and_singlets(
+        N=3, sites=sites, truncation_mode="T", cutoff=1
+    )
+    # All 4 sites have 4 half-links each (d=2 PBC).
+    assert set(link_irreps.keys()) == {4}
+    assert set(link_irreps[4]) == {(0, 0, 0), (1, 0, 0), (1, 1, 0)}
+
+
+def test_irreps_and_singlets_su3_t1_d2_trivial_singlet_present(tmp_path):
+    """The all-trivial singlet ((0,0,0)^4) has multiplicity 1.
+
+    The source records site_singlets[n][permutation[2:]][permutation[0:2]] = mult.
+    For an all-trivial 4-tuple there is exactly one distinct permutation, so
+    site_singlets[4][((0,0,0),(0,0,0))][((0,0,0),(0,0,0))] == 1.
+    """
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    sites = _build_d2_pbc_2x2_sites()
+    _, site_singlets, _ = irreps_and_singlets(3, sites, "T", 1)
+    trivial = (0, 0, 0)
+    assert site_singlets[4][(trivial, trivial)][(trivial, trivial)] == 1
+
+
+def test_irreps_and_singlets_su3_t1_d2_conj_dict_keys(tmp_path):
+    """conj_dict covers every irrep that appears in link_irreps."""
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    sites = _build_d2_pbc_2x2_sites()
+    link_irreps, _, conj_dict = irreps_and_singlets(3, sites, "T", 1)
+    all_irreps = set().union(*link_irreps.values())
+    assert set(conj_dict.keys()) == all_irreps
+
+
+def test_irreps_and_singlets_su3_t1_d2_conj_dict_trivial(tmp_path):
+    """conj_dict[(0,0,0)] = {0: (0, +1)} — trivial is self-conjugate, phase +1."""
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    sites = _build_d2_pbc_2x2_sites()
+    _, _, conj_dict = irreps_and_singlets(3, sites, "T", 1)
+    trivial_conj = conj_dict[(0, 0, 0)]
+    assert set(trivial_conj.keys()) == {0}
+    cst, phase = trivial_conj[0]
+    assert cst == 0
+    assert phase == 1
+
+
+def test_irreps_and_singlets_su3_t1_d2_conj_dict_fundamental(tmp_path):
+    """conj_dict[(1,0,0)] has 3 entries (one per fund state) mapping to (afund_state, ±1).
+
+    Each fund state has |phase| == 1 (sign of a nonzero CGC of magnitude 1/√3).
+    """
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    sites = _build_d2_pbc_2x2_sites()
+    _, _, conj_dict = irreps_and_singlets(3, sites, "T", 1)
+    fund_conj = conj_dict[(1, 0, 0)]
+    assert set(fund_conj.keys()) == {0, 1, 2}
+    # Conjugate map is a bijection onto the 3 antifund states.
+    target_states = {cst for cst, _phase in fund_conj.values()}
+    assert target_states == {0, 1, 2}
+    for _cst, phase in fund_conj.values():
+        assert abs(phase) == 1
+
+
+def test_irreps_and_singlets_c_mode_runs(tmp_path):
+    """C-mode truncation runs to completion on a small lattice."""
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    sites = _build_d2_pbc_2x2_sites()
+    link_irreps, _, _ = irreps_and_singlets(3, sites, "C", 4 / 3)
+    assert set(link_irreps[4]) >= {(0, 0, 0), (1, 0, 0), (1, 1, 0)}
+
+
+def test_irreps_and_singlets_b_mode_runs(tmp_path):
+    """B-mode truncation runs to completion on a small lattice."""
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    sites = _build_d2_pbc_2x2_sites()
+    link_irreps, _, _ = irreps_and_singlets(3, sites, "B", 6)
+    assert (0, 0, 0) in link_irreps[4]
+
+
+def test_irreps_and_singlets_rejects_invalid_truncation_mode(tmp_path):
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    sites = _build_d2_pbc_2x2_sites()
+    with pytest.raises(ValueError):
+        irreps_and_singlets(3, sites, "Z", 1)
+
+
+def test_irreps_and_singlets_rejects_invalid_N(tmp_path):
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    sites = _build_d2_pbc_2x2_sites()
+    with pytest.raises(ValueError):
+        irreps_and_singlets(1, sites, "T", 1)
+
+
+# ===========================================================================
+# physical_plaquette_states
+# ===========================================================================
+
+def test_physical_plaquette_states_su3_t1_d2_smoke(tmp_path):
+    """Smoke test on SU(3), T=1, d=2 PBC 2x2:
+    - Non-empty list of states.
+    - Every state is a 12-tuple.
+    - Active links are 3-tuples; control slots are tuples; multiplicities are ints.
+    - The all-trivial state appears.
+    """
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    sites, _, plaquettes = sites_links_and_plaquettes(
+        (2, 2, 1), (True, True, False), FORDER
+    )
+    _, site_singlets, _ = irreps_and_singlets(3, sites, "T", 1)
+    # Pick any plaquette (all 4 are equivalent under PBC d=2 2x2).
+    plaq_address = next(iter(plaquettes))
+    states = physical_plaquette_states(
+        plaq_address, sites, plaquettes, site_singlets, FORDER
+    )
+    assert len(states) > 0
+    for state in states:
+        assert len(state) == 12
+        for active_link in state[:4]:
+            assert isinstance(active_link, tuple) and len(active_link) == 3
+        for site_ctrls in state[4:8]:
+            assert isinstance(site_ctrls, tuple)
+            for ctrl in site_ctrls:
+                assert isinstance(ctrl, tuple) and len(ctrl) == 3
+        for g in state[8:]:
+            assert isinstance(g, int)
+
+    trivial = (0, 0, 0)
+    # Each site has 4 half-links; 2 are active, 2 are controls. So each
+    # site_ctrls is a length-2 tuple.
+    all_trivial = (
+        trivial, trivial, trivial, trivial,
+        (trivial, trivial), (trivial, trivial),
+        (trivial, trivial), (trivial, trivial),
+        0, 0, 0, 0,
+    )
+    assert all_trivial in states
