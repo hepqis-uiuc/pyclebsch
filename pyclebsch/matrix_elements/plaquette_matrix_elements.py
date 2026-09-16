@@ -317,9 +317,15 @@ def glue_plaquette_site_factors(s1, info, site_factors, ctrl_idxs, BCs, dims, EP
     if 1 in j_ctrl_idxs: s1_j_ctrl = s1[6][j_ctrl_idxs[1]]
 
     # Gather s2 site factors that match the s1 ith plaquette link irrep,
-    # and the control link irrep if BCs apply.
+    # and the control link irrep if BCs apply. A site factor matching the s1
+    # seed need not exist: different plaquette sites can support different
+    # irreps, for instance under a B truncation on a lattice whose sites do
+    # not all have the same number of half-links. When there is no match the
+    # s1 seed contributes nothing, since every matrix element it could
+    # participate in contains a vanishing s2 site factor as a product factor.
+    if (s1[0],s1[2]) not in info[2]: return matrix_elements
     if s2_has_BCs:
-        S2 = info[2][(s1[0],s1[2])][s1_i_ctrl]
+        S2 = info[2][(s1[0],s1[2])].get(s1_i_ctrl, [])
     else:
         S2 = info[2][(s1[0],s1[2])]
 
@@ -330,9 +336,11 @@ def glue_plaquette_site_factors(s1, info, site_factors, ctrl_idxs, BCs, dims, EP
         if 2 in j_ctrl_idxs: s2_j_ctrl = s2[6][j_ctrl_idxs[2]]
 
         # Gather s3 site factors that match s2 jth plaquette link irreps,
-        # accounting for BCs.
+        # accounting for BCs. As with s2 above, the absence of a match means
+        # this partial glueing contributes nothing.
+        if (s2[1],s2[3]) not in info[3]: continue
         if s3_has_BCs:
-            S3 = info[3][(s2[1],s2[3])][s2_j_ctrl]
+            S3 = info[3][(s2[1],s2[3])].get(s2_j_ctrl, [])
         else:
             S3 = info[3][(s2[1],s2[3])]
 
@@ -349,13 +357,14 @@ def glue_plaquette_site_factors(s1, info, site_factors, ctrl_idxs, BCs, dims, EP
             dim3 = dims[s3[0]]*dims[s3[1]]/dims[s3[2]]/dims[s3[3]]
             if 3 in i_ctrl_idxs: s3_i_ctrl = s3[6][i_ctrl_idxs[3]]
 
-            # Gather acceptable s4 site factors.
+            # Gather acceptable s4 site factors. As above, a control link irrep
+            # with no matching s4 site factor contributes nothing.
             if s4_has_BCs==(True,True):
-                S4 = info[4][(s3[0],s1[1],s3[2],s1[3])][(s3_i_ctrl, s1_j_ctrl)]
+                S4 = info[4][(s3[0],s1[1],s3[2],s1[3])].get((s3_i_ctrl, s1_j_ctrl), [])
             elif s4_has_BCs==(True,False):
-                S4 = info[4][(s3[0],s1[1],s3[2],s1[3])][s3_i_ctrl]
+                S4 = info[4][(s3[0],s1[1],s3[2],s1[3])].get(s3_i_ctrl, [])
             elif s4_has_BCs==(False,True):
-                S4 = info[4][(s3[0],s1[1],s3[2],s1[3])][s1_j_ctrl]
+                S4 = info[4][(s3[0],s1[1],s3[2],s1[3])].get(s1_j_ctrl, [])
             else:
                 S4 = info[4][(s3[0],s1[1],s3[2],s1[3])]
 
