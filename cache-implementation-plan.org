@@ -73,8 +73,22 @@ A key has these fields:
   cannot move the cache.
 - =set_cache_dir(...)= always clears the memory tier.
 - =set_cache_dir(...)= also writes =PYCLEBSCH_CACHE_DIR= (or removes it for
-  =None=). Worker processes started by =spawn= or =forkserver= then see the
-  same setting, including =Pool=s that users create themselves.
+  =None=). Worker processes started by =spawn= then see the same setting,
+  including =Pool=s that users create themselves.
+  - Scope of that side effect: =os.environ= changes the environment of the
+    current process and of processes it starts /afterwards/ (=subprocess=,
+    =multiprocessing=). It does not touch the parent shell or any other
+    running process.
+  - Whether =forkserver= workers of a user's own =Pool= see a change made
+    after the fork server started is tested in step 4
+    (=test_forkserver_user_pool_sees_later_setting=). The result decides only
+    what the documentation says.
+- *Optional memory cap:* =set_memory_cache_limit(max_entries)=, default
+  =None= (unbounded). With a limit, the least recently used entry is evicted.
+  Eviction is always safe, because an evicted entry is simply recomputed (or
+  reread from disk). The cap counts entries, not bytes: counting bytes would
+  need a size estimate per table, which is more machinery than a cap is worth
+  here.
 - pyclebsch's own site-factor =Pool= also passes the setting explicitly
   through an initializer, which does not depend on environment inheritance.
 
@@ -93,8 +107,8 @@ A key has these fields:
       "format": CACHE_FORMAT_VERSION,          # layout of this envelope
       "cgc_cache_version": CGC_CACHE_VERSION,  # CGC conventions
       "key": {"kind": ..., "product": ..., "sum_irrep": ..., "mult_idx": ..., "eps": ...},
-      "pyclebsch_version": "0.2.0",            # informational only
-      "pyclebsch_commit": "cb35b4e…" or None,  # informational only (git installs)
+      "pyclebsch_version": "0.2.0" or None,    # informational; None if pyclebsch is not installed
+      "pyclebsch_commit": "cb35b4e…" or None,  # informational; None for PyPI and editable installs
       "data": <the CGC table>,
   }
   #+end_src
@@ -112,17 +126,20 @@ A key has these fields:
 
 ** Copies and aliasing
 
-- The cached (private) functions return the stored objects, which must not be
-  mutated.
-- =calc_cgcs= reads them directly. This is safe because every value
-  =calc_cgcs= returns is a freshly built dict (its =reorder= step rebuilds
-  each level). A prototype confirmed this for all four call forms.
-- The public lower-level functions =calc_highest_weight_cgcs= and
-  =calc_lower_weight_cgcs= return =copy.deepcopy= of the stored object. A
-  prototype that did not copy let a caller corrupt later =calc_cgcs= results
-  by up to 9. Copying on /every/ read, including inside =calc_cgcs=, cost
-  0.66 s of 1.67 s in the 2×2×2 benchmark, which is why copies are confined
-  to the public lower-level functions.
+- The cached functions =_highest_weight_cgcs= and =_lower_weight_cgcs= are
+  private. They return the stored objects, which must not be mutated.
+- =calc_cgcs= is the only public way to get CGCs. It reads the stored objects
+  directly, which is safe because every value it returns is a freshly built
+  dict (its =reorder= step rebuilds each level). A prototype confirmed this
+  for all four call forms.
+- Today's public =calc_highest_weight_cgcs= and =calc_lower_weight_cgcs= are
+  removed from the public API. Nothing outside =cgc.py= calls them: not
+  =run/=, not the tests, and not psun, ymcirc or matrix-elements-C. So no
+  public path hands out cached objects, and no copying is needed anywhere.
+  - For reference: a prototype that exposed stored objects let a caller
+    corrupt later =calc_cgcs= results by up to 9.
+  - Copying on every read would have cost 0.66 s of 1.67 s in the 2×2×2
+    benchmark.
 
 * User-visible behavior changes (release notes for 0.2.0)
 
@@ -133,21 +150,24 @@ A key has these fields:
    as an absolute path.
 3. Existing =CGC_Data= folders are never read. They can be deleted.
 4. =set_cache_dir()= clears the in-memory cache and updates =PYCLEBSCH_CACHE_DIR=.
-5. =calc_highest_weight_cgcs= and =calc_lower_weight_cgcs= return copies:
-   mutating the result no longer affects anything else.
+5. =calc_highest_weight_cgcs= and =calc_lower_weight_cgcs= are removed from
+   the public API; use =calc_cgcs=, which covers every access pattern (all
+   irreps, one irrep, one copy, one state, one coefficient). They assumed a
+   sorted product without checking it; =calc_cgcs= sorts for you.
 6. i-weights must have integer entries. numpy integers are accepted and
    converted to =int=, so sum-irrep keys in =calc_cgcs= results are plain
    =int= tuples. Floats raise =TypeError= before any work or file I/O.
-7. New public helpers: =clear_memory_cache()= and =cache_stats()=.
+7. New public helpers: =clear_memory_cache()=, =cache_stats()= and
+   =set_memory_cache_limit(max_entries)= (default: no limit).
 
 * Files to be touched
 
 | File                                                | Change                                                                                   |
 |-----------------------------------------------------+------------------------------------------------------------------------------------------|
 | =pyclebsch/cache.py=                                | *New.* Cache key, two-tier cache, configuration API, worker initializer, constants      |
-| =pyclebsch/cgc.py=                                  | Remove old cache globals and pickle I/O. Split each CGC function into compute / cached / public. Canonicalize inputs. Drop eager =mkdir= |
+| =pyclebsch/cgc.py=                                  | Remove old cache globals and pickle I/O. Replace the two public lower-level functions with private compute / cached pairs. Canonicalize inputs. Drop eager =mkdir= |
 | =pyclebsch/su_n_operators.py=                       | Add =canonicalize_iweight=                                                                |
-| =pyclebsch/__init__.py=                             | Export =clear_memory_cache=, =cache_stats= (keep =set_cache_dir=, =get_cache_dir=)       |
+| =pyclebsch/__init__.py=                             | Export =clear_memory_cache=, =cache_stats=, =set_memory_cache_limit= (keep =set_cache_dir=, =get_cache_dir=) |
 | =pyclebsch/matrix_elements/plaquette_matrix_elements.py= | Site-factor =Pool= gets the cache initializer. Remove the "may result in an EOFError" comment |
 | =tests/conftest.py=                                 | *New.* Session-level isolation from a developer's =PYCLEBSCH_CACHE_DIR=                 |
 | =tests/test_cgc_cache.py=                           | Rewrite: defaults, memory tier, disk tier, recovery, versioning                          |
@@ -155,18 +175,20 @@ A key has these fields:
 | =tests/test_cache_multiprocessing.py=               | *New.* =spawn=/=fork= worker propagation and the cold parallel run, each in a subprocess |
 | =tests/test_su_n_operators.py=                      | Tests for =canonicalize_iweight=                                                          |
 | =tests/test_plaquette_matrix_elements.py=           | Correct the comment on the =parallelize= consistency test                                |
-| =README.md=                                         | Rewrite the intro note (line 4) and the "Caching CGC data to disk" section                |
+| =README.md=                                         | Rewrite the intro note (line 4) and the "Caching CGC data to disk" section, including what a disk entry records and when =pyclebsch_commit= is =None= |
 | =run/demo.py=                                       | Update the banner that says CGCs are written to =./CGC_Data=                              |
 | =run/su_n_wilson_loop.py=                           | Remove the "EOFError … run again" note from the module docstring                          |
 | =run/gen_ymcirc_data.py=                            | Remove the "May cause EOFError. Rerun" comment                                            |
-| =.claude/skills/pyclebsch/SKILL.md=                 | Update the cache lines (layout, the =EOFError= caveat, "relative to package root")       |
+| =.claude/skills/pyclebsch/SKILL.md=                 | Update the cache lines (layout, the =EOFError= caveat, "relative to package root"); rename the "Highest-Weight Algorithm" / "Lower-Weight Algorithm" headings to the private names |
+| =tests/test_cgc_api.py=                             | Update the comments at lines 163 and 176–177 that name the removed public functions      |
 | =CLAUDE.md=                                         | Add =cache.py= to the architecture list                                                   |
 | =pyproject.toml=                                    | =version = "0.2.0"= (the default behavior changes)                                        |
 
 Checked and left unchanged:
 - =pyclebsch/matrix_elements/lattice_data.py= (calls =calc_cgcs= only).
-- =tests/test_cgc_api.py= and =tests/test_lattice_data.py=. They call
-  =set_cache_dir(tmp_path / "CGC_Data")=, which remains valid.
+- =tests/test_lattice_data.py=. It calls =set_cache_dir(tmp_path / "CGC_Data")=,
+  which remains valid. =tests/test_cgc_api.py= makes the same calls, but
+  its comments change (see the table).
 - The glue =Pool= in =calc_plaquette_elements=, which never reads CGCs.
 
 * Proposed code
@@ -182,15 +204,36 @@ the proposal under review.
 Lookups go memory -> disk (only if a directory is configured) -> compute.
 The memory tier is always on and lives for the process. The disk tier is
 opt-in, via set_cache_dir() or the PYCLEBSCH_CACHE_DIR environment variable.
+
+Disk entry format
+-----------------
+Each file under <cache dir>/v<CGC_CACHE_VERSION>/ is a pickled dict with keys:
+  format             envelope layout version (CACHE_FORMAT_VERSION)
+  cgc_cache_version  CGC convention version (CGC_CACHE_VERSION)
+  key                kind, product, sum_irrep, mult_idx, eps of the table
+  pyclebsch_version  installed pyclebsch version string, or None when
+                     pyclebsch runs without being installed (e.g. from a
+                     source tree on PYTHONPATH)
+  pyclebsch_commit   git commit of the installed pyclebsch, or None. It is
+                     only known for installs made directly from a git
+                     repository (e.g. a uv/pip git source). It is None for
+                     installs from a package index such as PyPI and for
+                     editable installs, because neither records a commit.
+                     None is expected, not an error.
+  data               the CGC table
+Only format, cgc_cache_version and key are checked when an entry is read.
+pyclebsch_version and pyclebsch_commit are informational.
 """
 from __future__ import annotations
 
 import copy
+import functools
 import hashlib
 import os
 import pickle
 import tempfile
 import warnings
+from collections import OrderedDict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from numbers import Integral
@@ -279,15 +322,29 @@ class CacheStats:
     computed: int = 0
     disk_writes: int = 0
     disk_rejected: int = 0     # unreadable, wrong version, or key mismatch
+    evictions: int = 0         # memory entries dropped because of the cap
 
 
 class CGCCache:
     """Memory tier (always on) in front of an optional disk tier."""
 
-    def __init__(self, disk_dir: Path | None = None) -> None:
-        self._memory: dict[CacheKey, CGCTable] = {}
+    def __init__(self, disk_dir: Path | None = None,
+                 max_memory_entries: int | None = None) -> None:
+        # OrderedDict so a hit can move its entry to the end (most recently
+        # used) and eviction can pop from the front (least recently used).
+        self._memory: OrderedDict[CacheKey, CGCTable] = OrderedDict()
         self._disk_dir: Path | None = disk_dir
+        self._max_memory_entries: int | None = max_memory_entries
         self._stats = CacheStats()
+
+    @property
+    def max_memory_entries(self) -> int | None:
+        return self._max_memory_entries
+
+    def set_max_memory_entries(self, max_entries: int | None) -> None:
+        """None means unbounded; otherwise an int >= 1 (ValueError if not).
+        Evicts least recently used entries down to the new limit."""
+        ...
 
     @property
     def disk_dir(self) -> Path | None:
@@ -307,11 +364,16 @@ class CGCCache:
 
         The returned object is shared with the cache and must not be mutated.
         """
-        # 1. memory hit -> stats.memory_hits += 1; return
-        # 2. if disk on: table = self._read_disk(key); if found -> store in memory,
+        # 1. memory hit -> move_to_end(key); stats.memory_hits += 1; return
+        # 2. if disk on: table = self._read_disk(key); if found -> self._remember(key, table),
         #    stats.disk_hits += 1; return
-        # 3. table = compute(); stats.computed += 1; store in memory;
+        # 3. table = compute(); stats.computed += 1; self._remember(key, table);
         #    if disk on: self._write_disk(key, table)
+        ...
+
+    def _remember(self, key: CacheKey, table: CGCTable) -> None:
+        """Store in memory; while over the cap, popitem(last=False) and count
+        an eviction."""
         ...
 
     def stats(self) -> CacheStats:
@@ -346,9 +408,25 @@ def _disk_dir_from_env() -> Path | None:
     ...
 
 
+@functools.cache
 def _installed_commit() -> str | None:
-    """Commit hash from the installed distribution's direct_url.json (git
-    installs); None otherwise. Informational only; never used for validation."""
+    """Git commit of the installed pyclebsch, or None when it is not known.
+
+    Read from the distribution's direct_url.json (PEP 610):
+      - git install:      {"vcs_info": {"commit_id": "<40 hex chars>", ...}} -> that hash
+      - editable install: {"dir_info": {"editable": true}}                   -> None
+      - index install (PyPI wheel or sdist): no direct_url.json              -> None
+      - pyclebsch not installed, unreadable file, malformed JSON, missing keys -> None
+    Never raises. Computed once per process. Informational only; never used
+    to validate cache entries.
+    """
+    ...
+
+
+@functools.cache
+def _installed_version() -> str | None:
+    """importlib.metadata.version("pyclebsch"), or None if pyclebsch is not
+    installed (PackageNotFoundError). Informational only."""
     ...
 
 
@@ -378,14 +456,22 @@ def cache_stats() -> CacheStats:
     return _cache.stats()
 
 
-def init_worker(disk_dir: Path | None) -> None:
-    """multiprocessing.Pool initializer: apply the parent's disk setting."""
+def set_memory_cache_limit(max_entries: int | None) -> None:
+    """Cap the in-memory tier at max_entries tables (least recently used are
+    evicted), or remove the cap with None (the default)."""
+    _cache.set_max_memory_entries(max_entries)
+
+
+def init_worker(disk_dir: Path | None, max_memory_entries: int | None) -> None:
+    """multiprocessing.Pool initializer: apply the parent's cache settings."""
     set_cache_dir(disk_dir)
+    set_memory_cache_limit(max_memory_entries)
 
 
 def pool_kwargs() -> dict[str, object]:
     """Keyword arguments that make a Pool's workers use this process's cache
-    setting: {"initializer": init_worker, "initargs": (get_cache_dir(),)}."""
+    settings: {"initializer": init_worker,
+               "initargs": (get_cache_dir(), _cache.max_memory_entries)}."""
     ...
 #+end_src
 
@@ -409,7 +495,10 @@ def canonicalize_iweight(iweight: Sequence[Integral]) -> IrrepWeight:
   (lines 25–47 today);
 - the disk read/write blocks in both CGC functions (lines 66–72, 439–445,
   462–468 and 583–589);
-- the eager =mkdir= in =calc_cgcs= (lines 629–633).
+- the eager =mkdir= in =calc_cgcs= (lines 629–633);
+- the public names =calc_highest_weight_cgcs= (line 50) and
+  =calc_lower_weight_cgcs= (line 450). Their bodies, minus cache I/O, become
+  =_compute_highest_weight_cgcs= and =_compute_lower_weight_cgcs=.
 
 *Add and re-export*, so =pyclebsch.cgc.set_cache_dir= keeps working:
 
@@ -425,7 +514,7 @@ type LowerWeightTable = dict[int, dict[ProductState, float]]     # sum-irrep sta
 
 def _compute_highest_weight_cgcs(product_irreps: tuple[IrrepWeight, ...],
                                  sum_irrep: IrrepWeight) -> HighestWeightTable:
-    """Pure computation: today's calc_highest_weight_cgcs body, without cache I/O.
+    """Pure computation: the body of today's calc_highest_weight_cgcs, without cache I/O.
     Assumes product_irreps is sorted, as today. Raises ValueError if sum_irrep
     does not occur."""
     ...
@@ -433,7 +522,7 @@ def _compute_highest_weight_cgcs(product_irreps: tuple[IrrepWeight, ...],
 
 def _compute_lower_weight_cgcs(product_irreps: tuple[IrrepWeight, ...],
                                sum_irrep: IrrepWeight, mult_idx: int) -> LowerWeightTable:
-    """Pure computation: today's calc_lower_weight_cgcs body, without cache I/O.
+    """Pure computation: the body of today's calc_lower_weight_cgcs, without cache I/O.
     Gets the highest-weight table through _highest_weight_cgcs (cached).
     Raises ValueError('Invalid mult_idx.') as today."""
     ...
@@ -441,28 +530,19 @@ def _compute_lower_weight_cgcs(product_irreps: tuple[IrrepWeight, ...],
 
 def _highest_weight_cgcs(product_irreps: tuple[IrrepWeight, ...],
                          sum_irrep: IrrepWeight) -> HighestWeightTable:
-    """Cached; returns the shared table (do not mutate)."""
+    """Cached. Returns the shared table: callers must not mutate it, and
+    product_irreps must already be sorted (calc_cgcs guarantees both)."""
     key = CacheKey.highest(product_irreps, sum_irrep, EPS)
     return _cache.get_or_compute(key, lambda: _compute_highest_weight_cgcs(key.product, key.sum_irrep))
 
 
 def _lower_weight_cgcs(product_irreps: tuple[IrrepWeight, ...],
                        sum_irrep: IrrepWeight, mult_idx: int) -> LowerWeightTable:
-    """Cached; returns the shared table (do not mutate)."""
+    """Cached. Returns the shared table: callers must not mutate it, and
+    product_irreps must already be sorted (calc_cgcs guarantees both)."""
     key = CacheKey.lower(product_irreps, sum_irrep, mult_idx, EPS)
     return _cache.get_or_compute(key, lambda: _compute_lower_weight_cgcs(key.product, key.sum_irrep, key.mult_idx))
 
-
-def calc_highest_weight_cgcs(product_iweights: Sequence[Sequence[Integral]],
-                             sum_iweight: Sequence[Integral]) -> HighestWeightTable:
-    """Public API (unchanged signature semantics): returns a private deep copy."""
-    ...
-
-
-def calc_lower_weight_cgcs(product_iweights: Sequence[Sequence[Integral]],
-                           sum_iweight: Sequence[Integral], mult_idx: int) -> LowerWeightTable:
-    """Public API (unchanged signature semantics): returns a private deep copy."""
-    ...
 #+end_src
 
 Inside the computations, the places that currently need a list (e.g.
@@ -475,6 +555,8 @@ the tuple with =list(...)=.
   =TypeError= with no side effects.
 - It calls =_lower_weight_cgcs= (no copy) where it called
   =calc_lower_weight_cgcs=.
+- Its docstring gains a sentence: it is the public entry point for CGCs, and
+  the tables it returns are the caller's to modify.
 - It passes the canonical i-weights to =find_direct_sum=, so sum-irrep keys
   in results are plain =int= tuples.
 
@@ -497,7 +579,9 @@ gluing reads no CGCs.
 ** Changes to =pyclebsch/__init__.py=
 
 #+begin_src python
-from pyclebsch.cache import set_cache_dir, get_cache_dir, clear_memory_cache, cache_stats
+from pyclebsch.cache import (
+    set_cache_dir, get_cache_dir, clear_memory_cache, cache_stats, set_memory_cache_limit,
+)
 #+end_src
 
 * Tests
@@ -547,11 +631,11 @@ supersedes, if any.
   - Red today (no stats).
 - =test_memory_results_match_fresh_computation=: for several products, a
   cached =calc_cgcs= result equals one computed after =clear_memory_cache()=.
-- =test_public_lower_level_results_are_copies=: mutate the dict returned by
-  =calc_lower_weight_cgcs=; the next =calc_cgcs= is unchanged. Red with a
-  naive memo.
 - =test_calc_cgcs_results_do_not_alias_cache=: mutate the results of all
-  four call forms; later results are unchanged.
+  four call forms (every nested level); later results are unchanged. This is
+  the only aliasing test needed, since =calc_cgcs= is the only public path.
+- =test_lower_level_functions_not_public=: =pyclebsch.cgc= has no attributes
+  =calc_highest_weight_cgcs= or =calc_lower_weight_cgcs=. Red today.
 - =test_set_cache_dir_clears_memory=: =check_cgcs([(2,1,0),(2,1,0)])=, then
   =set_cache_dir(new_tmp)= and compute again; files appear in =new_tmp=. Red
   with a naive memo; this reproduces an order-dependent failure seen in the
@@ -561,6 +645,13 @@ supersedes, if any.
 - =test_float_iweights_rejected_without_side_effects=: =TypeError=, and
   neither the working directory nor the disk directory gains anything. Red
   today (it leaves an empty directory).
+- =test_memory_limit_evicts_least_recently_used=: with
+  =set_memory_cache_limit(2)=, compute three distinct entries. There are at
+  most 2 in memory, =evictions == 1=, and the evicted one is recomputed (not
+  wrongly served) on the next request.
+- =test_memory_limit_results_unchanged=: L1 matrix elements with a small cap
+  (e.g. 3) equal those with no cap.
+- =test_memory_limit_rejects_invalid_values=: =0=, =-1= and =2.5= raise =ValueError=.
 
 *Disk tier (opt-in)*
 - =test_disk_entries_written_under_version_namespace=: files appear under
@@ -584,6 +675,18 @@ supersedes, if any.
   Red today (=EOFError= on every call).
 - =test_failed_write_leaves_no_partial_file=: monkeypatch =pickle.dump= to
   raise mid-write; there is no target file and no =.tmp-*= file.
+- =test_disk_entry_header_records_provenance=: a written entry's
+  =pyclebsch_version= is a string or =None=, and its =pyclebsch_commit= is
+  =None= or 40 hex characters. In the test environment (an editable install)
+  the commit is =None=.
+- =test_installed_commit_handles_all_install_types=: with
+  =importlib.metadata.distribution= monkeypatched, check each case:
+  - git =direct_url.json= → the hash;
+  - editable → =None=;
+  - no file → =None=;
+  - malformed JSON → =None=;
+  - pyclebsch not installed (=PackageNotFoundError=) → =None=.
+  Clear the =functools.cache= between cases.
 - =test_long_product_uses_hashed_name=: =CacheKey.relative_path()= for a
   synthetic key whose readable name exceeds =MAX_ENTRY_NAME_BYTES= has every
   component within the limit. Computing a product that long is not required.
@@ -622,6 +725,16 @@ process-global.
   setting writes nothing anywhere. Red today.
 - =test_user_pool_workers_see_cache_dir_via_env=: a user's own =spawn= =Pool=
   (no initializer) maps =get_cache_dir= and gets the parent's path. Red today.
+- =test_forkserver_user_pool_sees_later_setting=: start a =forkserver= =Pool=
+  once, then call =set_cache_dir(tmp)=, then create a new user =Pool= (no
+  initializer) that maps =get_cache_dir=.
+  - This test records behavior; it does not express a preference.
+  - If workers see =tmp=, nothing more is needed.
+  - If they see the stale value, the test asserts that (so a change in Python
+    is noticed), and the README documents the limitation: set the variable,
+    or call =set_cache_dir=, before creating any =forkserver= =Pool=, or pass
+    =pool_kwargs()= to it.
+  - pyclebsch's own =Pool= is covered either way by its initializer.
 - =test_parallel_cold_disk_run_completes=: under =fork=, with the disk tier
   on and empty, the parallel site factors of plaquette 0 of the 2×2×2 PBC T1
   lattice complete and equal the serial result. Red today: crashed in 6 of 6
@@ -645,17 +758,19 @@ green.
 1. *Input canonicalization* (=canonicalize_iweight=; =calc_cgcs= validates
    first and drops the eager =mkdir=). Tests: canonicalization, float
    rejection, numpy entries sharing a key.
-2. *Memory tier.* Add =cache.py= with =CacheKey=, =CGCCache= (memory only,
-   plus the legacy disk code moved in unchanged), =CacheStats= and the
-   compute/cached/public split in =cgc.py=. Tests: all memory-tier tests.
+2. *Memory tier.* Add =cache.py= with =CacheKey=, =CGCCache= (memory tier
+   with the optional cap, plus the legacy disk code moved in unchanged),
+   =CacheStats= and the compute/cached/public split in =cgc.py=. Tests: all
+   memory-tier tests, including the cap.
 3. *Disk-tier hardening.* Version namespace, envelope and header validation,
    atomic writes, self-healing reads, hashed fallback names. Tests: all
    disk-tier tests.
 4. *Defaults and propagation.* Disk off by default, =PYCLEBSCH_CACHE_DIR=,
    path resolution, =set_cache_dir= clearing memory and updating the
    environment, and =pool_kwargs()= in the site-factor =Pool=. Tests: the
-   defaults/configuration tests and =test_cache_multiprocessing.py=. The
-   conftest lands here.
+   defaults/configuration tests and =test_cache_multiprocessing.py=,
+   including the =forkserver= behavior test, whose outcome sets the README
+   wording. The conftest lands here.
 5. *Docs, scripts and version.* Update README, SKILL.md, CLAUDE.md and the
    =run/= comments; set =pyproject.toml= to 0.2.0.
 
@@ -681,31 +796,58 @@ each can be reviewed on its own; step 4 flips the default.
 
 * Decisions for the reviewer
 
-1. *Should =set_cache_dir= write =os.environ=?*
-   - Recommendation: yes. It is the only mechanism that also reaches =Pool=s
-     users create themselves.
-   - Cost: a process-wide side effect that subprocesses inherit.
-   - Alternative: rely on the initializer only, which covers pyclebsch's own
-     =Pool= but not users' pools.
-2. *=forkserver= semantics are unverified.* The forkserver process may keep
-   the environment it had when it started. If so, a =set_cache_dir= call made
-   after the server started would not reach workers of a user's own =Pool=.
-   pyclebsch's own =Pool= is unaffected, because of the initializer. Verify
-   during step 4, and document the limitation if it holds.
-3. *Readable names with a hashed fallback, or always hashed?* The
-   recommendation is readable names with the fallback, since they are easier
-   to inspect and the header check makes both safe.
-4. *Keep =calc_highest_weight_cgcs= / =calc_lower_weight_cgcs= public?* The
-   recommendation is yes, with copies, for backward compatibility. Making
-   them private is also acceptable at alpha stage.
-5. *Memory size cap.* The recommendation is none for now: the largest
-   footprint measured was 133 entries, about 293 kB. A limit can be added
-   later if a real sweep needs it.
-6. *Informational commit hash in the header.* It is cheap and helps
-   diagnose, but it is never validated, because validating it would
-   invalidate on every commit.
-7. *Version number.* The recommendation is 0.2.0, because the default
-   behavior changes.
+Status after the reviewer's responses of 2026-09-24. Answers to individual
+questions do not approve the plan as a whole.
+
+1. *=set_cache_dir= writes =os.environ=. Resolved: yes.* The condition was
+   that it affects only child processes and nothing else outside the original
+   process. That holds. Changing =os.environ= alters the environment of the
+   current process and of processes it starts afterwards (=subprocess=,
+   =multiprocessing=). It cannot reach the parent shell or any other running
+   process.
+
+   One in-process detail: other code in the same process that reads
+   =os.environ["PYCLEBSCH_CACHE_DIR"]= would see the new value, but only
+   pyclebsch reads that variable.
+2. *=forkserver= semantics. Resolved: this is a test, not a decision.* It is
+   now =test_forkserver_user_pool_sees_later_setting= in step 4, and its
+   outcome decides only the README wording.
+3. *Readable names with a hashed fallback. Resolved: adopted.*
+4. *Public or private =calc_highest_weight_cgcs= / =calc_lower_weight_cgcs=?
+   Resolved: private.* Only =cgc.py= calls them. No caller exists in =run/=,
+   the tests (comments only) or psun, ymcirc and matrix-elements-C. Making
+   them private removes an unchecked sorted-input precondition from the
+   public API and removes any need for copying. The cost is losing direct
+   access to raw sorted-order tables. =calc_cgcs= covers every documented
+   access pattern, though fetching only highest-weight CGCs through it also
+   computes the lower-weight table for that copy. The body of this plan
+   (copies and aliasing, release note 5, files table, =cgc.py= code, tests)
+   reflects this.
+5. *Memory size cap. Resolved: implement now, default =None=.* It costs one
+   constructor argument, an =OrderedDict= with =move_to_end= on hits and
+   =popitem(last=False)= over the cap, a setter, an =evictions= counter, and
+   passing the limit through =pool_kwargs()=: about a dozen lines. The design
+   overview, code, tests and step 2 above reflect this.
+6. *Commit hash in the header. Resolved: record it, informational only.*
+   The condition was that =None= is handled and documented. It is:
+   - =_installed_commit()= never raises. It returns the hash for git installs
+     and =None= for index (PyPI) installs, editable installs, uninstalled
+     source trees, and unreadable or malformed metadata. This follows what
+     =direct_url.json= contains for each install type, checked in this
+     investigation on a git install and an editable install, and on numpy as
+     an index install.
+   - The =None= case is documented where users will look. The =cache.py=
+     module docstring has a "Disk entry format" section, and the README
+     caching section says the same. The =_installed_commit= docstring has
+     the per-install-type table for maintainers.
+   - Two tests cover it: =test_installed_commit_handles_all_install_types= and
+     =test_disk_entry_header_records_provenance=.
+   - It is never used for validation. =CGC_CACHE_VERSION=, forced by the
+     golden-value test, is the validated version. The reasons: the commit is
+     unavailable for PyPI and editable installs, and it would invalidate the
+     cache on every commit for git installs. A source-hash "strict" mode stays
+     a possible later addition, not part of this plan.
+7. *Version number. Resolved: 0.2.0.*
 
 * Risks
 
