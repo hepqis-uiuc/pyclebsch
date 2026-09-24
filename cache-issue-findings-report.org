@@ -1,0 +1,451 @@
+#+title: CGC cache: findings and mitigation options
+#+date: 2026-09-24
+
+* Summary
+
+The question: can pyclebsch's on-disk Clebsch-Gordan coefficient (CGC) cache
+cause errors or, worse, hand a caller CGCs that differ from what the current
+code would compute, with no error raised?
+
+Short answer: *yes, one path does this today, and a second one is latent.*
+
+| ID | Problem                                                                       | Consequence                  | Evidence                         | Who is exposed now                                                                                   |
+|----+-------------------------------------------------------------------------------+------------------------------+----------------------------------+------------------------------------------------------------------------------------------------------|
+| F1 | =set_cache_dir()= does not reach =multiprocessing= workers under the =spawn= or =forkserver= start methods | Silent wrong data            | Demonstrated                     | Any =parallelize=True= run on macOS (all Python versions), or on Linux with Python >= 3.14 |
+| F2 | Cache entries record no provenance (code version, conventions, =EPS=)         | Silent wrong data (latent)   | Reasoned; history checked clean  | Anyone reusing a cache across a future convention change                                            |
+| F3 | Writes are not atomic, and a truncated entry is never recovered from           | Crash, repeated on every run | Demonstrated                     | Parallel first runs (the documented =EOFError=), killed runs                                         |
+| F4 | Cache key is =str()= of whatever objects the caller passed                     | Duplicate cache entries, or =OSError= | Demonstrated                     | Callers that pass numpy integers                                                                     |
+| F5 | Documentation and one test get cache behavior wrong                            | Misleading                   | Read                             | Developers                                                                                           |
+| F6 | Loading a cache entry runs =pickle=                                                  | Code execution if the cache is shared/untrusted | Known property of =pickle= | Anyone sharing a cache directory                                                                     |
+
+Two results rule out a present-day problem:
+- *Every cache file currently on disk is correct.* All 445 pickles in the four
+  =CGC_Data= directories found under =~/…/Projects/claude/= match a fresh,
+  uncached recomputation by the current code (details in [[*Checks that came back clean][Checks that came back clean]]).
+- *No past commit has changed the CGC values.* Seven revisions going back to
+  September 2025 (=35e3926=) produce identical CGCs on products chosen to
+  exercise nontrivial multiplicities. This includes =d977e8f=, which rewrote
+  the Young-symmetrizer construction.
+
+So F2 has never caused stale data. Nothing in the design would catch it if a
+future change did.
+
+*Recommendation:* strategy S2 below. That means fixing worker propagation, atomic
+writes and key canonicalization, and also namespacing the cache by an explicit
+convention version whose bump is forced by a golden-value regression test. Do
+F1 first; it is the only confirmed silent-corruption path.
+
+* Scope, success criteria and method
+
+*What counts as the bad outcome.* A call to =calc_cgcs= (directly or through
+the lattice code) returns coefficients that differ from a fresh, uncached
+computation by the /current/ code, and no exception is raised. Crashes and
+wasted recomputation are real problems too, but lesser ones. This report keeps
+the two classes separate.
+
+*Method.* The findings come from reading =pyclebsch/cgc.py= (HEAD =6c64dfd=; its
+code is identical to =cb35b4e=, the revision pinned in =psun/uv.lock=) and from
+running experiments in a Linux container (Python 3.12.12, the project =.venv=).
+All scripts ran from a scratch directory outside the repository.
+Older revisions were extracted with =git archive= into that scratch directory,
+so the pyclebsch repository itself was not modified (no worktrees or branches were created).
+
+Agreement between two sets of CGCs was judged with a per-coefficient
+tolerance of 1e-8. Why that number: =cgc.EPS= = 1e-10 is the threshold below which
+pyclebsch drops a coefficient, so two correct runs may disagree by about
+1e-10 on an entry one of them dropped. A convention change, by contrast, moves
+coefficients by O(0.1–1). A negative control confirmed the comparison is
+not vacuous: swapping the two octet copies in 3 ⊗ 3 ⊗ 3 produces a max
+difference of 1.12.
+
+* How the cache works
+
+This section is for a reader who has not opened =cgc.py=.
+
+- The cache directory is a module-level global, =_cgc_cache_dir=, initialized
+  at import to =Path("./CGC_Data")=. =set_cache_dir(path)= replaces it, and
+  =set_cache_dir(None)= disables caching. The path is /relative/. Every
+  =mkdir=/=open= therefore resolves it against the process's working directory
+  at the moment of the call, not at import time.
+- =calc_cgcs(product_iweights, …)= first normalizes each i-weight (subtracts
+  its last entry) and sorts the nontrivial ones. Trivial irreps are then
+  handled specially: none are kept if at least two nontrivial irreps remain,
+  one is kept if only one nontrivial irrep remains, and two are kept if all
+  are trivial. The resulting list is =product_irreps=, and =str(product_irreps)=
+  names a directory under the cache root. For example: =CGC_Data/[(1, 0, 0), (1, 1, 0)]/=.
+- Inside that directory, two kinds of file hold the data:
+  - =highest_weight_CGC_(2, 1, 0)= holds CGCs of the highest-weight state of that sum irrep, for
+    /all/ its multiplicity copies. It is written by =calc_highest_weight_cgcs=.
+  - =lower_weight_CGC_((2, 1, 0), 1)= holds CGCs of every state of one multiplicity copy.
+    It is written by =calc_lower_weight_cgcs=, which builds it from the highest-weight file.
+  =calc_cgcs= only ever reads lower-weight files; the highest-weight files are an intermediate.
+- A file is a pickled =dict=: ={sum-irrep state index: {product state: coefficient}}=.
+  Product states are tuples of Gelfand–Tsetlin (GT) pattern /indices/, i.e.
+  positions in the list returned by =find_gt_patterns(R)=. Sum states are also
+  indices. Coefficients below =EPS= are omitted.
+- Read path: =if path.exists(): return pickle.load(open(path, 'rb'))=.
+  Write path: =open(path, 'wb')= followed by =pickle.dump=. There is no
+  in-memory layer, so every call re-reads the file.
+
+* Findings
+
+** F1. Worker processes ignore =set_cache_dir()= (silent wrong data; demonstrated)
+
+*Mechanism.* =_cgc_cache_dir= lives only in the memory of the process that
+called =set_cache_dir=. The plaquette code parallelizes with a bare
+=multiprocessing.Pool(5)= (=plaquette_matrix_elements.py=, in
+=calc_plaquette_site_factors= and =calc_plaquette_elements=), and
+=parallelize=True= is the default. How workers start depends on the start method:
+- =fork= copies the parent's memory, so workers see the parent's setting.
+- =spawn= and =forkserver= start fresh interpreters that re-import
+  =pyclebsch.cgc=, so each worker's cache dir silently reverts to
+  =Path("./CGC_Data")= in the working directory.
+
+=spawn= is the default on macOS (since Python 3.8) and Windows. =forkserver=
+is the default on Linux from Python 3.14. The project's =CLAUDE.md= says
+3.14+, while =.python-version= pins 3.12.
+
+*Demonstration.* The test used plaquette 0 of the SU(3), 2×2×1, PBC,
+T-truncation-1 lattice from =tests/test_plaquette_matrix_elements.py=.
+Matrix elements were computed sequentially and then with =parallelize=True=,
+after calling =set_cache_dir()= in the parent. The script is in the appendix.
+
+| Start method | Parent setting     | What workers used | =./CGC_Data= created in working dir? |
+|--------------+--------------------+-------------------+--------------------------------------|
+| =fork=       | =None=             | =None=            | no                                   |
+| =fork=       | custom dir         | custom dir        | no                                   |
+| =spawn=      | =None=             | =CGC_Data=        | yes (19 files)                       |
+| =spawn=      | custom dir         | =CGC_Data=        | yes (19 files)                       |
+| =forkserver= | =None=             | =CGC_Data=        | yes (19 files)                       |
+| =forkserver= | custom dir         | =CGC_Data=        | yes (19 files)                       |
+
+A second step made the consequence concrete. One entry in the working
+directory's =./CGC_Data= was replaced with a stand-in for a stale entry (every
+coefficient of =[(1, 1, 0), (1, 1, 0)]/lower_weight_CGC_((1, 0, 0), 1)= halved).
+The parent was then pointed at a fresh, empty cache directory.
+
+| Start method | Parent setting  | Elements (seq / par) | max abs(seq − par) |
+|--------------+-----------------+----------------------+--------------------|
+| =spawn=      | fresh clean dir | 835 / 835            | 0.938              |
+| =spawn=      | =None=          | 835 / 835            | 0.938              |
+| =fork=       | fresh clean dir | 835 / 835            | 0                  |
+
+The parallel result is wrong by O(1). It has the same number of elements and
+raises no error. Even =set_cache_dir(None)= is not a reliable way to get fresh
+data.
+
+*Exposure.*
+- psun calls =calc_plaquette_elements(…, parallelize=False)=, so psun is not
+  exposed today.
+- pyclebsch's own =run/gen_ymcirc_data.py= and =run/su_n_wilson_loop.py= set
+  =parallelize = True=, so they are exposed when run on macOS.
+- =tests/test_plaquette_matrix_elements.py::test_calc_plaquette_elements_parallelize_consistency=
+  says its workers "read from cache" populated by the module's tmp-dir
+  fixture. Under =spawn=, they instead read and write the repository's own
+  =./CGC_Data= (pytest's working directory). The repo cache gained 36 files
+  on 2026-09-16, which is consistent with this but does not prove it.
+
+** F2. Entries carry no provenance (silent wrong data; latent)
+
+*What a cached entry depends on that its key does not record.* The key is
+(normalized, sorted product; sum irrep; multiplicity index). The /content/
+also depends on:
+1. *GT-pattern ordering.* Product and sum states are stored as indices into
+   =find_gt_patterns(R)=. If that function ever enumerates patterns in a
+   different order, every cached index points at a different state.
+2. *Multiplicity labeling.* Which copy of a repeated sum irrep is called 1, 2, …
+   is set by the iteration order of the dict returned by
+   =find_symmetry_direct_sum=, the Young-symmetrizer convention, and the
+   RREF + QR step used when an S_n irrep appears more than once. The
+   singlet multiplicity index is part of a plaquette state label, so a
+   relabeling changes which physical state a matrix element refers to.
+3. *Phase convention.* The sign is fixed by making the coefficient of the
+   lexicographically smallest product state with a non-negligible coefficient positive.
+4. *=EPS=.* It controls which coefficients are omitted. It is a module global,
+   so a caller can change it, but the cache ignores the value it had at write time.
+5. *The normalization and trivial-irrep rules that produce the key.*
+   Commit =d977e8f= changed these. The old scheme's keys are still visible in
+   =matrix-elements-C/CGC_Data= (e.g. =[(0, 0, 0), (0, 0, 0), (1, 0, 0), (1, 1, 0)]=).
+   That change happened to be harmless, because old-scheme keys are simply
+   never looked up again.
+
+If any of 1–4 changes, the next run loads the old entries silently. Two
+features of the design make this worse:
+- *The default location depends on the working directory.* Stale caches are
+  easy to pick up without noticing. This investigation found four separate
+  caches: =psun/=, =pyclebsch/=, =matrix-elements-C/=, and a stray one in the
+  top-level =Projects/claude/= directory (51 files, 2026-09-17), presumably
+  from a run started there. The four overlap heavily. =os.chdir= mid-run (for
+  example =%cd= in Jupyter) moves the cache silently too.
+- *Invalidation happens one file at a time.* Different multiplicity copies of
+  the same sum irrep live in different lower-weight files. If some are deleted
+  and others are not, or caches from two machines are merged, one product can
+  mix copies from two conventions. Such copies need not be orthogonal to each other.
+
+*Why this is "latent" and not "present".* Two checks:
+- All 445 on-disk entries match the current code. That includes the 178 files
+  last written before =d977e8f= landed (2026-05-12).
+- The full =calc_cgcs(product)= output at revisions =35e3926=, =056cd74=,
+  =21b73e5=, =d977e8f=, =059015e= and =cb35b4e= was compared on nine products
+  with multiplicities up to 8. They include 3 ⊗ 3 ⊗ 3, where the two octets
+  span the 2-dimensional mixed-symmetry irrep of S_3, and 8 ⊗ 8 ⊗ 8. Every
+  (irrep, copy, state) entry agreed to within the tolerance, in every revision.
+
+The conventions have been stable in practice. The cache simply has no way to
+notice if that ever stops being true.
+
+** F3. Non-atomic writes; corrupt entries are never recovered (crash, not silent; demonstrated)
+
+The mechanism: =open(path, 'wb')= creates an empty file immediately, and
+=pickle.dump= fills it afterward. Meanwhile, the read path treats "file exists" as
+"entry is valid". Two consequences follow:
+- *Parallel first runs crash.* This is the documented "=EOFError= on first
+  parallel run". Another worker sees the new empty file and tries to load it.
+  Workers compute identical bytes, so this race causes crashes, not wrong data.
+- *A corrupt entry is permanent.* An empty =lower_weight_CGC_((0, 0, 0), 1)=
+  placed in a cache made /every/ later =calc_cgcs= call raise =EOFError=, not
+  just the first. The advice "rerun to fix" only works if the file was
+  finished by the time the crash happened. =with Pool(...)= calls =terminate()=
+  when an exception propagates, and that can kill a worker in the middle of
+  =dump=. This is a reasoned path to a permanently truncated file, not one
+  that was observed.
+
+*Truncation does not produce silently wrong data.* All 170,135 strict prefixes
+of all 167 files in =psun/CGC_Data= were tried (the files are pickle protocol 4).
+Every one raised (=UnpicklingError= 169,801 times, =EOFError= 334 times),
+because a pickle is complete only when its final =STOP= opcode is present. The
+original report's description, "the next run dies on =UnpicklingError=", is
+accurate.
+
+** F4. The key is =str()= of the caller's objects (duplicate entries or =OSError=)
+
+=str(list_of_tuples)= uses each element's =repr=. With NumPy 2 integers:
+- =calc_cgcs([tuple(np.array([1,0,0])), tuple(np.array([1,1,0]))])= creates a
+  second directory, =[(np.int64(1), np.int64(0), np.int64(0)), (np.int64(1), np.int64(1), np.int64(0))]=.
+  Its data is identical to the plain-=int= entry, so it is recomputed for nothing.
+  The returned sum-irrep keys are also =np.int64= tuples.
+- The name grows from 11 to about 41 bytes per SU(3) irrep. Seven SU(3) irreps
+  give a 287-byte directory name, which exceeds the 255-byte limit of common
+  filesystems and raises =OSError=. With plain =int=s, the limit is only
+  reached at about 23 SU(3) irreps.
+- Float i-weights raise =TypeError= inside =find_gt_patterns=. But
+  =calc_cgcs= creates the cache directory /before/ validating its input, so an
+  empty =[(1.0, 0.0, 0.0), …]= directory is left behind.
+
+*Correction to the original report:* Windows does /not/ object to these
+names. Windows forbids =< > : " / \ | ? *= in filenames, and brackets, parentheses,
+commas and spaces are all legal. The Windows limit that could actually bite is
+the 260-character total path length (=MAX_PATH=), when long-path support is
+not enabled.
+
+** F5. Documentation and test inaccuracies
+
+- The pyclebsch skill's reference file (=.claude/skills/pyclebsch/SKILL.md=) says the cache is
+  "Stored in =CGC_Data/= relative to package root". It is relative to the
+  working directory. =README.md= states this correctly.
+- =tests/test_cgc_cache.py::test_cgcs_not_written_when_cache_none= asserts
+  that =tmp_path/"CGC_Data"= does not exist. Nothing would ever write there,
+  whether caching is on (it would write to =./CGC_Data=) or off, so the test cannot fail.
+- The =parallelize= consistency test's comment is wrong under =spawn= (see F1).
+
+** F6. Pickle is a code-execution channel
+
+The original report is right. =pickle.load= can run arbitrary code, so a
+cache directory must be exactly as trusted as the code. Keeping =CGC_Data/*=
+gitignored (it is, in pyclebsch) is the right call.
+
+** Checks that came back clean
+
+| Check                                                    | Result                                                          |
+|----------------------------------------------------------+-----------------------------------------------------------------|
+| All 445 on-disk entries vs. fresh HEAD computation        | 445 match, 0 mismatch, 0 unloadable                             |
+| Seven revisions (Sep 2025 → HEAD), nine products          | Identical to within tolerance                                   |
+| Any strict prefix of a cache file loads successfully?     | No, all 170,135 raise                                           |
+| Trailing bytes after a complete pickle                    | Ignored by =pickle.load= (relevant only if two /different/ writers race) |
+| Parallel vs. sequential with a clean cache, =fork=         | Identical (835 elements, max difference 0)                      |
+
+* Assessment of the original report's claims
+
+| Claim                                                         | Verdict                                                                                 |
+|---------------------------------------------------------------+-----------------------------------------------------------------------------------------|
+| Default dir is relative to the working directory               | Correct. Also resolved per call, not at import                                          |
+| =set_cache_dir(None)= is "the on/off switch you want"            | Only in the calling process. Workers under =spawn=/=forkserver= ignore it (F1)             |
+| Entries carry no metadata/version, so stale entries load silently | Correct as a hazard (F2). No stale entries exist today                                  |
+| Multiplicity ordering is what tests are most sensitive to       | Agreed. The historical check covered multiplicities up to 8 and found no drift          |
+| Non-atomic writes; truncated pickle kills the next run          | Correct, and it kills /every/ later run until the file is deleted (F3)                  |
+| Pickle is a code-execution channel                              | Correct (F6)                                                                             |
+| Long products may exceed 255 bytes                              | Correct but remote for plain =int=s. Much nearer with numpy integers (F4)                  |
+| Windows would object to the characters                          | Incorrect. The characters are legal; =MAX_PATH= is the real limit                         |
+| "Quietly recomputing for ten minutes"                           | Depends on the product. Uncached vs. cached time for one singlet in a Linux container: 0.13 s vs 0.5 ms for =3^3 ⊗ 3̄^3=; 47 s vs 17 ms for =3 ⊗ 3̄ ⊗ 8 ⊗ 8 ⊗ 6 ⊗ 6̄=. The cache is worth keeping |
+
+* Mitigation strategies
+
+** S1. Minimal hardening (keep the layout and format)
+
+1. *Worker propagation (fixes F1).*
+   - Make the configuration inheritable. At import, read the default from an
+     environment variable (=PYCLEBSCH_CACHE_DIR=, with a sentinel such as an
+     empty string meaning "disabled"), and have =set_cache_dir= also write that
+     variable. Children started by =spawn= and =forkserver= inherit the
+     parent's environment, so this also covers =Pool=s that callers create themselves.
+   - Also pass =initializer=set_cache_dir, initargs=(get_cache_dir(),)= to
+     pyclebsch's own =Pool=s.
+2. *Resolve to an absolute path* when the directory is set (=Path(p).resolve()=), and
+   do the same for the default at import. =chdir= then no longer moves the cache.
+3. *Atomic writes (F3).* Write to a temporary file in the same directory, then
+   =os.replace()= it onto the final name. The final name then only ever appears
+   complete, so concurrent readers see either nothing or a whole file.
+4. *Self-healing reads (F3).* If loading raises
+   (=EOFError=, =UnpicklingError=, =ValueError=, …), warn, delete the entry and recompute.
+5. *Canonical keys (F4).* Build the key from =tuple(int(x) for x in irrep)=,
+   after validating the input and before creating any directory.
+
+- Pros: a small, local change. Existing caches stay valid. Removes the
+  demonstrated silent-corruption path and the recurring crash.
+- Cons: does nothing about F2. A future change to GT ordering, multiplicity
+  labeling or phase would still be served stale. Mutating =os.environ= is a
+  process-wide side effect that subprocesses also see.
+
+** S2. S1 + versioned, self-describing entries (recommended)
+
+Everything in S1, plus:
+1. *A convention-version namespace.* Add a constant such as =CGC_CACHE_VERSION = 1=
+   to =cgc.py=, with a comment listing what it covers (items 1–5 of F2). Store
+   entries under =<cache dir>/v<CGC_CACHE_VERSION>/…=. A bump orphans every old
+   entry, so they are never read. No per-file bookkeeping is needed, which also
+   fixes the partial-invalidation problem.
+2. *A small header in every entry:* ={cache_version, pyclebsch_version, N, product, sum_irrep, mult_idx, EPS}=
+   stored next to the data. On load, check it against the request, and treat
+   any mismatch like a corrupt file (recompute). This catches files copied into the
+   wrong directory and a changed =EPS=, which the namespace alone does not.
+3. *A golden-value test that forces the bump.* A version constant is only as
+   good as the discipline behind it. The trigger should be a test that pins
+   literal CGC values, keyed by =CGC_CACHE_VERSION=, for a handful of cases
+   that exercise every convention:
+   - 3 ⊗ 3̄ → 8 (GT ordering, phase)
+   - both octets in 3 ⊗ 3 ⊗ 3 (mixed S_3 symmetry, multiplicity labeling)
+   - both copies of 8 in 8 ⊗ 8
+   - the two singlets of 3 ⊗ 3 ⊗ 3̄ ⊗ 3̄
+   Any convention change fails the test. The fix is to record new golden values
+   under a new version number, and that bump invalidates all old caches.
+
+   A variant: key the namespace on a hash of the source of =cgc.py=,
+   =su_n_operators.py= and =symmetric_group/=. That needs no discipline, but
+   it invalidates on every edit, comments included, and the 47 s entries make
+   that noticeable.
+
+- Pros: closes F1–F4 with one mechanism each. A convention change becomes
+  something the test suite refuses to ignore. Cost is one recomputation per
+  version bump.
+- Cons: more code than S1. Orphaned =v<N>= directories accumulate until
+  someone deletes them. The current caches are orphaned once (they are cheap
+  to rebuild for the products seen so far).
+
+** S3. Replace the storage backend
+
+Use a single SQLite file, one row per entry, with canonical JSON (or packed
+arrays) as the value. The key and header go in columns, and SQLite's own
+transactions and locking handle concurrent writers. Versioning works as in
+S2, as a column or a database file per version.
+
+- Pros: removes =pickle= (F6), filename-length and character concerns (F4),
+  and write races (F3) in one step. A single file is easy to inspect, ship
+  or delete.
+- Cons: the largest change. =np.float64= values and tuple keys have to be
+  serialized explicitly. SQLite locking is unreliable on some network
+  filesystems (NFS home directories on clusters). It does not by itself fix F1
+  or F2, so it needs S1 item 1 and S2's versioning anyway.
+
+** Where should the default cache live?
+
+This is separate from S1–S3. Moving the default to a per-user absolute
+location (for example =~/.cache/pyclebsch=, or the platform equivalent) would
+end the scattering seen in F2. But it would also make one cache shared by
+every project and every pyclebsch version a user has installed, which is only
+safe once S2's versioning exists. It is also a visible behavior change, so it
+is a call for the maintainers. It is not required by any of the fixes above.
+
+* Recommended path forward
+
+Adopt S2 and defer S3 unless pickle or network filesystems become a real
+concern. Suggested order, each step written red/green:
+
+1. *F1 first.* Red: a test that runs the appendix scenario with the
+   =spawn= context. It uses a tmp working directory whose =./CGC_Data= holds a
+   deliberately altered entry, with the parent pointed at a clean tmp cache,
+   and asserts =parallelize=True= equals =parallelize=False=. It currently
+   fails with a max difference of 0.938. Green: S1 item 1 (and item 2).
+   Also correct the comment in the existing =parallelize= consistency test.
+2. *F3.* Red: create an empty entry, then assert =calc_cgcs= returns correct
+   values and rewrites the file. It currently raises =EOFError= on every call.
+   Green: S1 items 3–4.
+3. *F4.* Red: assert that numpy-integer and =int= inputs produce one directory,
+   and that float input leaves no directory behind. Green: S1 item 5.
+4. *F2.* Add the golden-value test at the current values, which pass today.
+   Then add the version namespace and the header. Red/green for the header: an
+   entry copied into the wrong product directory must be recomputed, not returned.
+5. *F5.* Fix the skill's reference file, and replace the vacuous test with one that sets
+   the working directory to =tmp_path= and asserts nothing is written anywhere.
+
+Until then, downstream users can protect themselves:
+- Call =set_cache_dir()= with an /absolute/ path at startup.
+- Keep =parallelize=False= (psun already does), or run on Linux with
+  Python < 3.14, where =fork= is the default.
+- Delete any cache of unknown origin rather than reuse it.
+
+* Appendix: reproducing F1
+
+Run from an empty scratch directory with the pyclebsch virtual environment:
+
+#+begin_src python
+"""Does set_cache_dir() in the parent reach multiprocessing workers?
+Usage: python mp_cache_demo.py START_METHOD PARENT_CACHE_DIR|none
+"""
+import multiprocessing as mp
+import sys
+from pathlib import Path
+
+import pyclebsch.cgc as cgc
+from pyclebsch.matrix_elements.lattice_data import irreps_and_singlets, sites_links_and_plaquettes
+from pyclebsch.matrix_elements.plaquette_matrix_elements import calc_plaquette_elements
+
+FORDER = [1, 2, 3, -1, -2, -3]
+N_COLORS, EPS, PRES = 3, 1e-10, 10  # as in tests/test_plaquette_matrix_elements.py
+
+
+def worker_cache_dir(_):
+    return str(cgc.get_cache_dir())
+
+
+def main() -> None:
+    method, parent_dir = sys.argv[1], sys.argv[2]
+    mp.set_start_method(method)
+    cgc.set_cache_dir(None if parent_dir == "none" else parent_dir)
+    with mp.Pool(2) as pool:
+        print("worker cache dirs:", sorted(set(pool.map(worker_cache_dir, range(4)))))
+    sites, _, plaquettes = sites_links_and_plaquettes([2, 2, 1], [True, True, False], FORDER)
+    trunc, singlets, conj = irreps_and_singlets(N_COLORS, sites, "T", 1)
+    P = sorted(plaquettes)[0]
+    args = (N_COLORS, P, sites, plaquettes, trunc, singlets, conj, FORDER, EPS, PRES)
+    seq = calc_plaquette_elements(*args, parallelize=False)
+    par = calc_plaquette_elements(*args, parallelize=True)
+    diff = max(abs(seq.get(k, 0) - par.get(k, 0)) for k in set(seq) | set(par))
+    print(f"elements: seq={len(seq)} par={len(par)}; max |seq-par| = {diff:.3g}")
+    print("./CGC_Data in CWD:", Path("CGC_Data").exists())
+
+
+if __name__ == "__main__":
+    main()
+#+end_src
+
+Steps:
+1. Run once with =spawn= to populate =./CGC_Data=.
+2. Halve the coefficients in one entry:
+   #+begin_src python
+   import pickle
+   from pathlib import Path
+   f = Path("CGC_Data/[(1, 1, 0), (1, 1, 0)]/lower_weight_CGC_((1, 0, 0), 1)")
+   d = pickle.load(open(f, "rb"))
+   pickle.dump({s: {p: 0.5 * c for p, c in v.items()} for s, v in d.items()}, open(f, "wb"))
+   #+end_src
+3. Rerun with =spawn= and a fresh parent directory (or =none=), then with =fork=.
