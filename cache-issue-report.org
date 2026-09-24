@@ -1,0 +1,34 @@
+#+title: Potential cache issue report
+
+* Background
+This document contains potential cache issues highlighted by a code agent in a project that installs pyclebsch as a dependency in its virtual environment. That "user" project primarily makes contact with pyclebsch in order to generate lots of plaquette matrix elements. Different lattice geometries are used, and all locations in a lattice are scanned over. This means that different geometries of site factor appear frequently. Additionally, there is scanning over various irrep truncation modes.
+
+* The issue report
+*What pyclebsch does* (=pyclebsch/cgc.py=, as pinned in =uv.lock=):
+
+- The default cache directory is the *relative* path =./CGC_Data=, resolved
+  against the process working directory. Run from =psun/= you get
+  =psun/CGC_Data= (present, 696 KB, 66 product directories, gitignored); run a
+  script from anywhere else and you silently start a new cache. This is the
+  "hitting cached data when you did not expect to" hazard, and its mirror
+  image, which is quietly recomputing for ten minutes.
+- There is =set_cache_dir(path)= and =set_cache_dir(None)= to disable, which is
+  the on/off switch you want -- but =psun= never calls it, so today we inherit
+  the CWD-dependent default.
+- *Entries carry no metadata and no version.* The key is a directory named
+  =str(product_iweights)= and a file named after the summed irrep (plus the
+  multiplicity index for lower-weight CGCs). Nothing records the pyclebsch
+  revision, =EPS=, or the multiplicity-ordering convention. If any of those
+  change, stale entries are loaded silently -- and multiplicity ordering is
+  exactly what our tests are most sensitive to.
+- *Writes are not atomic*: =open(path,'wb')= then =dump=. A killed run leaves a
+  truncated pickle, and the load path has no try/except, so the next run dies
+  on =UnpicklingError= rather than recomputing.
+- Loading executes pickle, so a shared or committed cache is a code-execution
+  channel. It is gitignored, which is the right call; worth keeping that way.
+- Filenames embed bracket/comma/space characters from =str(...)=. Fine on
+  Linux and macOS; a long product could exceed the 255-byte filename limit, and
+  Windows would object to the characters.
+
+* Task
+Based on the background and issue report, investigate whether there are any quirks or bugs in the architecture that pyclebsch uses for caching Clebsch-Gordan coefficients which could cause errors or (even worse) silent use of incorrect Clebsch-Gordan data for downstream users. If there are any such problems, explain what they are, and propose two or three mitigation strategies along with pros/cons and your recommended path forward. Document your findings in a new =cache-issue-findings-report.org= document in the project root for pyclebsch. Do not make any persistent changes to the pyclebsch codebase otherwise.
