@@ -57,11 +57,19 @@ Young-symmetrizer construction. So F2 has not been triggered by any past
 upgrade. The scenario results above used a deliberately introduced convention
 change. Nothing in the design would catch a real one.
 
-*Recommendation:* strategy S2 below. That means fixing worker propagation,
-atomic writes and key canonicalization, and also namespacing the cache by an
-explicit convention version whose bump is forced by a golden-value regression
-test. The version namespace is what turns both upgrade scenarios into a clean
-recomputation.
+*Recommendation:* strategy S4 below. Keep CGCs in an in-memory cache that is
+always on, and make the disk cache opt-in. Then harden the opt-in disk tier
+with S2: worker propagation, atomic writes, canonical keys, and a
+convention-version namespace whose bump is forced by a golden-value test.
+
+Measured in a Linux container, a memory-only cache was the fastest
+configuration for every workload tested. It beat even a warm disk cache
+(1.01 s vs 1.25 s for one 2×2×2 plaquette's site factors, against 146.6 s with
+no cache). It also removes F2, F3 and F6 for everyone who does not opt in to
+disk. The price is that each new process recomputes what it needs. That is
+about a second for the lattice workloads measured, but up to tens of seconds
+for single large products, and those users can opt in to disk. pyclebsch is
+alpha software, so the change of default is acceptable.
 
 * Scope, success criteria and method
 
@@ -565,8 +573,8 @@ Separately, the scenarios show F3's first-run crash occurs readily in default us
 plaquette's L3 site factors took 145–147 s. With the disk cache (partly
 warm) they took about 2 s. Both were measured in the Linux container. The
 lattice code asks for the same CGCs over and over, and without the disk cache
-nothing remembers them between calls. So "just turn the cache off" is not a
-workable default unless an in-memory layer is added.
+nothing remembers them between calls. An in-memory tier removes that
+repetition; S4 below has the measurements.
 
 * Assessment of the original report's claims
 
@@ -610,7 +618,7 @@ workable default unless an in-memory layer is added.
   labeling or phase would still be served stale. Mutating =os.environ= is a
   process-wide side effect that subprocesses also see.
 
-** S2. S1 + versioned, self-describing entries (recommended)
+** S2. S1 + versioned, self-describing entries (recommended for the opt-in disk tier)
 
 Everything in S1, plus:
 1. *A convention-version namespace.* Add a constant such as =CGC_CACHE_VERSION = 1=
@@ -660,28 +668,167 @@ S2, as a column or a database file per version.
   filesystems (NFS home directories on clusters). It does not by itself fix F1
   or F2, so it needs S1 item 1 and S2's versioning anyway.
 
-** Where should the default cache live?
+** S4. An in-memory tier: memory on by default, disk opt-in (recommended)
 
-This is separate from S1–S3. Moving the default to a per-user absolute
-location (for example =~/.cache/pyclebsch=, or the platform equivalent) would
-end the scattering seen in F2. But it would also make one cache shared by
-every project and every pyclebsch version a user has installed, which is only
-safe once S2's versioning exists. It is also a visible behavior change, so it
-is a call for the maintainers. It is not required by any of the fixes above.
+*Design.* Lookups go memory → disk (only if enabled) → compute.
+- The memory tier is always on. Its key has the same fields as the disk key:
+  normalized, sorted product, the normalized sum irrep, and the copy index.
+  It is built from plain-int tuples, not =str()=, so it avoids F4.
+- The disk tier is off unless the user calls =set_cache_dir(path)= (or sets
+  the environment variable from S1 item 1).
+- =calc_cgcs= reads memory entries without copying. That is safe because
+  every result it returns is a freshly built dict: its =reorder= step
+  rebuilds each level. This was checked for all four call forms (all irreps,
+  one irrep, irrep + copy, one state). Mutating any returned result left later
+  results unchanged.
+- The public lower-level functions =calc_lower_weight_cgcs= and
+  =calc_highest_weight_cgcs= must return copies, or become private. Without
+  that, a caller who edits a returned dict corrupts the cache for the rest of
+  the process (demonstrated below).
+- =set_cache_dir()= clears the memory tier, and a public =clear_memory_cache()=
+  does the same. Otherwise entries loaded from one directory keep being served
+  after switching to another.
+- A size cap is optional. The largest footprint measured was 133 entries,
+  293 kB.
 
-Turning disk caching off by default is not a real alternative on its own.
-The lattice code requests the same CGCs repeatedly, so a cache-less run is
-about 70× slower (145–147 s vs about 2 s for one L3 plaquette's site factors,
-in a Linux container). It would need an in-memory memo layer (e.g. a
-=functools.lru_cache= around the two entry points) to be usable.
+*** Measurements
+
+All times are wall-clock in the Linux container (Python 3.12.12). The
+memory tier was a prototype patched into =pyclebsch.cgc= at run time; the
+repository was not modified. Four predictions were written down before
+measuring:
+1. Memory-only would be dramatically faster than no cache, and within about
+   2× of a disk cache that starts empty.
+2. Memory in front of a warm disk would give only a modest gain.
+3. Runs dominated by gluing site factors into matrix elements would barely benefit.
+4. A memory tier that returns its stored objects would let callers corrupt it.
+All four were confirmed.
+
+*Site factors for one plaquette of the 2×2×2 lattice (L3), serial.* Times are
+the median of three runs where repeated.
+
+| Configuration                                   | Wall time | File reads | CGC sets computed |
+|-------------------------------------------------+-----------+------------+-------------------|
+| No cache (today's =set_cache_dir(None)=)        | 146.6 s   | 0          | one per call: 23,763 =calc_cgcs= calls |
+| Disk, empty at start (today's default, first run) | 1.66 s  | 23,749     | 46                |
+| Disk, warm                                      | 1.25 s    | 23,763     | 0                 |
+| *Memory only*                                   | *1.01 s*  | 0          | 46                |
+| Memory + disk, empty at start                   | 1.23 s    | 0          | 46 (also written) |
+| Memory + disk, warm                             | 0.84 s    | 32         | 0                 |
+| Memory only, deep copy on every return          | 1.67 s    | 0          | 46                |
+
+The same workload with =parallelize=True= (=fork=, five workers):
+
+| Configuration          | Result                                        |
+|------------------------+-----------------------------------------------|
+| No cache               | 30.6 s                                        |
+| Disk, empty at start   | crashed with =EOFError= (F3) in 6 of 6 runs   |
+| Memory only            | 0.56 s                                        |
+
+Every configuration that completed produced identical site factors, within
+7e-16 of the no-cache result.
+
+*Full matrix elements, all plaquettes, serial.* The disk cache started empty.
+
+| Lattice             | No cache | Disk   | Memory only | Share of disk-run time inside =calc_cgcs= |
+|---------------------+----------+--------+-------------+-------------------------------------------|
+| 2×2×1 PBC, T1 (L1)  | 2.29 s   | 0.115 s | 0.054 s    | 74%                                       |
+| 2×2×1 PBC, B6       | 7.74 s   | 0.40 s | 0.22 s      | 67%                                       |
+| 3×3×1 open, B6      | 2.99 s   | 0.16 s | 0.087 s     | 76%                                       |
+| 3×3×1 PBC, T1       | 5.80 s   | 0.92 s | 0.79 s      | 19%                                       |
+
+*A run dominated by gluing.* The test used plaquette 0 of 2×2×1 PBC with T
+truncation cutoff 2. Its site factors took 2.7 s with the memory tier and
+4.1 s with an empty disk cache. Gluing them into matrix elements then ran for
+a further ~103 s before failing with =MemoryError= at a 12 GB limit. CGC work
+is at most ~4% of that run, so no cache design changes it materially.
+
+*pyclebsch's test suite.* It takes 0.67 s, or 0.59–0.63 s with the memory
+tier, and all 197 tests pass either way. One real interaction showed up, though.
+With a memory tier that is never cleared, running
+=test_cgc_correctness_8x8= before =test_cgcs_written_to_configured_dir=
+makes the second test fail: the entry is served from memory and nothing is
+written to the new directory. Clearing the memory tier in =set_cache_dir()=
+fixes it.
+
+*Aliasing.* The test used a prototype memory tier that returns its stored
+objects. A caller scaled every coefficient of a dict returned by
+=calc_lower_weight_cgcs= by 10. After that, =calc_cgcs= for the same irrep
+was wrong by up to 9. With today's disk cache, or with a copying memory tier,
+the error was 0. But copying on /every/ return cost 0.66 s here, 1.67 s vs
+1.01 s, which is why the design above copies only in the public lower-level
+functions.
+
+*Which earlier experiments in this report would have been faster.*
+- The no-cache reference runs, by far. Each L3 site-factor run with caching
+  disabled took ~145–147 s and would have taken about a second.
+- The disk-cache runs, marginally. They already took 1–2 s.
+- The runs that ran out of memory, not at all. Their time went into gluing.
+
+*** Why memory on, disk opt-in
+
+- *Speed.* Within a process, memory-only was the fastest configuration in
+  every measurement, including against a warm disk. Disk only helps when an
+  expensive entry has to survive across processes. The largest single entry
+  timed in this report, a six-irrep singlet, takes 47 s to compute. Users who
+  need such entries repeatedly can opt in.
+- *Safety for the default user.* With no disk tier:
+  - F2 is gone, because a process runs a single code revision.
+  - F3 is gone, because there are no files to race on. The cold parallel run
+    that crashed 6 of 6 times with the disk cache ran cleanly in memory.
+  - F6, stray =CGC_Data= folders and accidentally committed caches are all
+    gone.
+  - F4's duplicate entries are gone, because a canonical int-tuple key merges
+    numpy and plain integers.
+  - F1 no longer matters, because the default user never calls =set_cache_dir()=.
+- *What opting in still needs.* The disk tier keeps all its current
+  hazards, so it still needs S2, including S1's worker propagation and atomic
+  writes.
+- *Not measured.* Under =spawn= or =forkserver=, each worker would start with
+  an empty memory tier and compute what it needs once. A run-time patch is not
+  re-applied in spawned workers, so this could not be benchmarked with the
+  prototype. The expected cost is at most one extra computation of each
+  needed entry per worker, run in parallel.
+
+- Pros: the fastest in-process configuration measured. It removes F2, F3, F4
+  (duplicates) and F6 for the default user without any versioning machinery,
+  and the change is small (two wrappers, a dict and a clear function).
+- Cons: a change of default. =get_cache_dir()= returns =None= out of the box,
+  and =test_get_cache_dir_default= must change. Users who relied on
+  persistence across runs must opt in. New processes pay the first
+  computation again.
+
+** Where should the (opt-in) disk cache live?
+
+With S4, nothing is written unless the user asks. For those who opt in, the
+safest choice is to require an explicit path, with no implicit =./CGC_Data=.
+A per-user location such as =~/.cache/pyclebsch= is a reasonable convenience
+default for opt-in users, but only together with S2's version namespace,
+because one such directory would be shared by every project and every
+installed pyclebsch revision.
 
 * Recommended path forward
 
-Adopt S2 and defer S3 unless pickle or network filesystems become a real
-concern. Suggested order, each step written red/green:
+Adopt S4 first, then harden the opt-in disk tier with S2 (which includes
+S1). Defer S3 unless pickle or network filesystems become a real concern.
+Suggested order, each step written red/green:
 
-1. *F2 first, because it is the one that reaches users who never touch the
-   cache settings.*
+1. *S4: memory tier on, disk opt-in.* This alone takes default users out of
+   reach of F2, F3 and F6.
+   - Red/green, correctness: L1 matrix elements with the memory tier equal
+     the uncached ones.
+   - Red/green, reuse: count the underlying CGC computations for L1. They
+     should equal the number of distinct entries (19), against 2,627
+     =calc_cgcs= calls.
+   - Red/green, aliasing: mutate a dict returned by
+     =calc_lower_weight_cgcs=, then assert =calc_cgcs= is unchanged. A naive
+     memory tier fails this; it was off by 9 in the prototype.
+   - Red/green, clearing: =test_cgc_correctness_8x8= followed by
+     =test_cgcs_written_to_configured_dir= must pass. It fails with a memory
+     tier that is never cleared.
+   - New defaults: =get_cache_dir()= is =None=, and a run in =tmp_path= as the
+     working directory writes nothing. This replaces the vacuous test from F5.
+2. *F2, for the opt-in disk tier.*
    - Add the golden-value test at the current values; it passes today.
    - Red: plant an entry with altered coefficients, standing in for an entry
      written by an older revision, at the path the current code looks up.
@@ -692,19 +839,18 @@ concern. Suggested order, each step written red/green:
      then either in an old namespace, so never read, or fails the header
      check. Add a second red/green pair for the header: an entry copied into
      the wrong product directory must be recomputed, not returned.
-2. *F1.* Red: a test that runs the appendix scenario with the
+3. *F1, for the opt-in disk tier.* Red: a test that runs the appendix scenario with the
    =spawn= context. It uses a tmp working directory whose =./CGC_Data= holds a
    deliberately altered entry, with the parent pointed at a clean tmp cache,
    and asserts =parallelize=True= equals =parallelize=False=. It currently
    fails with a max difference of 0.938. Green: S1 item 1 (and item 2).
    Also correct the comment in the existing =parallelize= consistency test.
-3. *F3.* Red: create an empty entry, then assert =calc_cgcs= returns correct
+4. *F3.* Red: create an empty entry, then assert =calc_cgcs= returns correct
    values and rewrites the file. It currently raises =EOFError= on every call.
    Green: S1 items 3–4.
-4. *F4.* Red: assert that numpy-integer and =int= inputs produce one directory,
+5. *F4.* Red: assert that numpy-integer and =int= inputs produce one directory,
    and that float input leaves no directory behind. Green: S1 item 5.
-5. *F5.* Fix the skill's reference file, and replace the vacuous test with one that sets
-   the working directory to =tmp_path= and asserts nothing is written anywhere.
+6. *F5.* Fix the skill's reference file (the vacuous test is replaced in step 1).
 
 Until then, downstream users can protect themselves:
 - Delete =./CGC_Data= after every change to the installed pyclebsch revision
