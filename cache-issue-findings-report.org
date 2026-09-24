@@ -26,7 +26,14 @@ installed from GitHub =develop=, no cache settings touched. For details see
 - *As long as the installed pyclebsch revision does not change, both are
   safe.*
   - Changing FORDER and regenerating (scenario 1) reused every cache entry
-    and gave exactly the no-cache result.
+    and gave exactly the no-cache result. That includes the site factors
+    where the change swaps equal irreps inside a multiplicity > 1 singlet. On
+    a 2×2×2 lattice, 1,510 of those site factors had their multiplicity
+    copies genuinely rotated into each other by the FORDER change, and the
+    warm cache still matched the no-cache values to 4.4e-16. Separately, the
+    CGCs =calc_cgcs= returns for reordered products were verified directly:
+    orthonormality, intertwining with J(k)±, and agreement with permuted
+    sorted-order CGCs.
   - Generating a new lattice/truncation that shares site-factor ingredients
     with an earlier run (scenario 2) also gave exactly the no-cache result.
   The cache holds only group-theory data for a product of irreps. FORDER,
@@ -329,6 +336,8 @@ never ran the code that wrote the files.
 | Seven revisions (Sep 2025 → HEAD), nine products          | Identical to within tolerance                                   |
 | Any strict prefix of a cache file loads successfully?     | No, all 15,023 raise                                            |
 | Changing FORDER or lattice/truncation, same revision (scenarios 1–2) | Warm cache gives exactly the no-cache result              |
+| … restricted to equal irreps swapped in multiplicity > 1 singlets (L1, L3) | Warm = no cache to 4.4e-16, including 1,510 L3 site factors whose copies mix |
+| CGCs for all 15 orderings of four products with repeated irreps | Orthonormal, intertwining error at most 3e-15, equal to permuted sorted-order CGCs |
 | Trailing bytes after a complete pickle                    | Ignored by =pickle.load= (relevant only if two /different/ writers race) |
 | Parallel vs. sequential with a clean cache, =fork=         | Identical (835 elements, max difference 0)                      |
 
@@ -389,6 +398,95 @@ FORDER went from =[1, 2, 3, -1, -2, -3]= to =[1, -1, 2, -2, 3, -3]= on L1.
 
 *Cache-safe.* A different FORDER asks for the same irrep products in a
 different order, and the lookup is order-independent by construction (see F2).
+
+*** The case that matters: equal irreps swapped inside a multiplicity > 1 singlet
+
+The table above is aggregate. On its own it does not show that the FORDER
+change exercised the one situation where FORDER acts on CGCs beyond relabeling
+positions. That situation is two /equal/ irreps inside a singlet trading
+places. The sort in =calc_cgcs= keeps equal irreps in their order of
+appearance, so such a swap becomes a transposition of identical tensor
+factors. That transposition acts on the singlet's multiplicity space. So
+site-factor calls were logged individually and classified.
+
+At a site, the FORDER change A → B flips the relative order of these half-link pairs:
+- L1 (four half-links): only (2, −1).
+- L3 (six half-links): (2, −1), (3, −1) and (3, −2).
+
+A call counts as "swap + mult" if its initial or final singlet has multiplicity
+> 1 and carries equal irreps on one of the flipped pairs. Each call was matched
+across FORDERs by its physical configuration: the irrep on each half-link
+direction, plus the singlet multiplicity labels Gi and Gf.
+
+| Check                                                              | L1 (all 4 plaquettes)          | L3 (one plaquette)              |
+|--------------------------------------------------------------------+--------------------------------+---------------------------------|
+| FORDER-B site-factor calls                                         | 656                            | 5,940                           |
+| … "swap + mult" (nonzero)                                          | 160 (112)                      | 5,138 (3,840)                   |
+| Warm cache vs. no cache, "swap + mult" calls                       | max difference 4.4e-16         | max difference 4.4e-16          |
+| Same configuration, FORDER A vs. B: "swap + mult" calls            | 112 equal, 48 sign-flipped     | 2,538 equal, 1,090 sign-flipped, *1,510 changed beyond a sign* |
+| Same configuration, FORDER A vs. B: all other calls                | 400 equal, 96 sign-flipped     | 736 equal, 66 sign-flipped      |
+
+A further breakdown for L1 explains the sign-flipped "other" calls (the L3
+"other" calls were not broken down this way). All 96 involve equal irreps on
+the flipped pair inside a multiplicity-1 singlet. An antisymmetric singlet
+such as 3̄ ⊗ 3̄ ⊗ 3̄ changes sign when two factors trade places. When both
+singlets have distinct irreps on the flipped pair, A and B agree exactly
+(276 calls, none changed). So:
+- *Repeated irreps* on the swapped half-links are necessary for FORDER to
+  change a site factor at all. This was established for L1.
+- *Multiplicity > 1* is needed for anything beyond a sign. In L3, all 1,510
+  beyond-sign changes fall in the "swap + mult" group. In L1 there are none.
+
+*Why L1 shows only signs.* In L1 no three equal irreps meet at a site. A
+check on the CGCs themselves shows what changes when they do. In the basis
+pyclebsch builds, swapping the first two of three equal factors acts on the
+copies as a diagonal ±1. Swapping the second and third mixes copies:
+- For 3 ⊗ 3 ⊗ 3, the two octet copies transform as the 2 × 2 matrix
+  [[−1/2, √3/2], [√3/2, 1/2]].
+- For 3 ⊗ 3 ⊗ 3 ⊗ 3̄ ⊗ 3̄ ⊗ 3̄, four of the six singlet copies are mixed the same way.
+
+That is the 2-dimensional mixed-symmetry irrep of S_3 in a basis adapted to
+S_2 ⊂ S_3. It explains the 1,510 L3 site factors that change beyond a sign.
+
+*Conclusion for the cache.* Even in the L3 case, where the FORDER change
+genuinely rotates multiplicity copies into each other, the warm cache gives
+the no-cache values to 4.4e-16. The rotation is applied /after/ the load, by
+the same sort-then-unsort code on both paths. The cache entry itself is
+always in the sorted product's basis, so no entry is ever specific to a FORDER.
+
+*What that comparison cannot show,* and the check that closes the gap. Warm
+and uncached runs share the sort-then-unsort code, so a bug there would
+appear identically in both. That code was therefore checked for correctness
+directly. The test covered every distinct ordering of
+- SU(2) 2 ⊗ 2 ⊗ 3
+- SU(3) 3 ⊗ 3 ⊗ 3̄ ⊗ 3̄
+- SU(3) 3 ⊗ 3 ⊗ 8
+- SU(3) 3 ⊗ 8 ⊗ 8
+which is 15 orderings with multiplicities up to 4. For each, =calc_cgcs(ordering)= passed:
+1. =check_cgcs=, which tests orthonormality and completeness.
+2. An intertwining check that does not use =calc_cgcs='s ordering logic. For
+   every sum irrep, copy, state and k, the raising and lowering operators
+   J(k)± applied factor by factor to the coupled state must equal J(k)±
+   applied to the sum-irrep state, re-expanded in CGCs. The worst violation
+   was 3e-15. Negative controls show the check is sensitive: swapping two
+   sum states gives 0.775, and perturbing one coefficient by 0.1 gives 0.141.
+   It is insensitive to relabeling copies (1.6e-15), which is a change of
+   convention, not an error.
+3. Agreement, to within 1e-15, with the sorted-order CGCs whose tensor factors
+   are permuted by the stable mapping (equal irreps keep their relative
+   order). The /other/ valid mappings, which differ by swapping equal irreps,
+   change 1–7 (irrep, copy) blocks. So the multiplicity basis for a given
+   ordering is fixed by this stable-mapping convention.
+4. A warm-cache result, from an entry written while computing the sorted
+   ordering, equal to the uncached result.
+
+*A note that is not about the cache.* The last two points mean the meaning of
+a singlet multiplicity label G depends on FORDER whenever equal irreps trade
+places. The change is a sign when two equal irreps meet at a site, and an
+orthogonal mixing when three or more do. Matrix-element tables generated
+under different FORDERs therefore label their states in bases related by
+those transformations. This is a consequence of the convention, and harmless
+as long as tables built under different FORDERs are not combined label by label.
 
 ** Scenario 2: new lattice or truncation that shares ingredients
 
