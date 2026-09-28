@@ -1,13 +1,23 @@
+from collections.abc import Sequence
+
 import numpy as np
 from scipy.sparse import csr_array
 from scipy.sparse.linalg import eigsh
 from itertools import product, permutations
 from collections import Counter, defaultdict
 from more_itertools import locate, product_index
-from pathlib import Path
-from pickle import load, dump
 
+from pyclebsch.cache import (
+    CacheKey,
+    ProductState,
+    _cache,
+    cache_stats,
+    clear_memory_cache,
+    get_cache_dir,
+    set_cache_dir,
+)
 from pyclebsch.su_n_operators import (
+    IrrepWeight,
     normalize_iweight,
     standardize_iweight_type,
     calc_dimension,
@@ -23,54 +33,28 @@ from pyclebsch.symmetric_group.young_symmetrizer import young_symmetrizer
 
 EPS = 1e-10
 
-_cgc_cache_dir: Path | None = Path("./CGC_Data")
-
-def set_cache_dir(path: str | Path | None) -> None:
-    """Set the directory where computed CGCs are cached.
-    Pass None to disable caching entirely.
-    """
-    global _cgc_cache_dir
-    _cgc_cache_dir = Path(path) if path is not None else None
+type HighestWeightTable = dict[int, dict[ProductState, float]]   # copy index (1-based) -> {product state: CGC}
+type LowerWeightTable = dict[int, dict[ProductState, float]]     # sum-irrep state index -> {product state: CGC}
 
 
-def get_cache_dir() -> Path | None:
-    """Return the current CGC cache directory, or None if caching is disabled."""
-    return _cgc_cache_dir
-
-
-def _resolve_cache_dir() -> Path | None:
-    """Return the effective cache directory, creating it if needed.
-    Returns None when caching is disabled.
-    """
-    if _cgc_cache_dir is None:
-        return None
-    _cgc_cache_dir.mkdir(parents=True, exist_ok=True)
-    return _cgc_cache_dir
-
-
-def calc_highest_weight_cgcs(
-    product_iweights: list[tuple], sum_iweight: tuple
-) -> dict[int, dict[tuple, float]]:
+def _compute_highest_weight_cgcs(product_irreps: tuple[IrrepWeight, ...],
+                                 sum_irrep: IrrepWeight) -> HighestWeightTable:
     """Calculates the Clebsch-Gordan Coefficients for the highest-weight state
-    of an irrep (sum_iweight) appearing in the direct-sum decomposition of a
-    direct product of irreps (product_iweights). A multiplicity number
+    of an irrep (sum_irrep) appearing in the direct-sum decomposition of a
+    direct product of irreps (product_irreps). A multiplicity number
     of orthonormal CGC vectors are produced. The CGCs transform under
     irreps of the symmetric group, as given by find_symmetry_direct_sum.
     Returns a dictionary whose keys are the multiplicity indices of
-    sum_iweight, and whose values are dictionaries of the form
+    sum_irrep, and whose values are dictionaries of the form
     {product basis state: CGC}.
     ~Eqs. (33)-(34) and Pg. 13
+
+    Pure computation, with no caching. Both arguments must be normalized,
+    and product_irreps sorted, as calc_cgcs guarantees. Raises ValueError if
+    sum_irrep does not occur in the decomposition.
     """
 
-    # Normalize sum_iweight to sum_irrep. Return CGCs if already computed.
-
-    sum_irrep = normalize_iweight(sum_iweight)
-    cache_dir = _resolve_cache_dir()
-    if cache_dir is not None:
-        highest_weight_cgc_data_path = cache_dir / str(product_iweights) / ('highest_weight_CGC_' + str(sum_irrep))
-        if highest_weight_cgc_data_path.exists():
-            with open(highest_weight_cgc_data_path, 'rb') as fp:
-                return load(fp)
+    product_iweights = list(product_irreps)
 
     # Gather initial data. The GT-pattern for the highest-weight state
     # of sum_irrep can be manually made. gt_patterns is a dictionary
@@ -437,40 +421,33 @@ def calc_highest_weight_cgcs(
     for a in range(multiplicity):
         cgc_dict[a+1] = {selected_basis[i]: vecs[a][i] for i in range(len(selected_basis)) if abs(vecs[a][i]) > EPS}
 
-    # Save CGCs.
-
-    if cache_dir is not None:
-        highest_weight_cgc_data_path = cache_dir / str(product_iweights) / ('highest_weight_CGC_' + str(sum_irrep))
-        highest_weight_cgc_data_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(highest_weight_cgc_data_path, 'wb') as fp:
-            dump(cgc_dict, fp)
-
     return cgc_dict
 
 
-def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, mult_idx: int) -> dict[int, dict[tuple, float]]:
+def _compute_lower_weight_cgcs(product_irreps: tuple[IrrepWeight, ...],
+                               sum_irrep: IrrepWeight, mult_idx: int) -> LowerWeightTable:
     """Calculates the Clebsch-Gordan Coefficients for all lower-weight states
-    of an irrep (sum_iweight, mult_idx) appearing in the direct-sum
-    decomposition of a direct product of irreps (product_iweights).
-    Returns a dictionary whose keys enumerate the states of sum_iweight
+    of an irrep (sum_irrep, mult_idx) appearing in the direct-sum
+    decomposition of a direct product of irreps (product_irreps).
+    Returns a dictionary whose keys enumerate the states of sum_irrep
     (highest to lowest weight), and whose values are dictionaries of the
     form {product basis state: CGC}.
     ~Pg. 14
+
+    Pure computation, except that the highest-weight table it starts from is
+    obtained through _highest_weight_cgcs, which caches it. Both arguments
+    must be normalized, and product_irreps sorted, as calc_cgcs guarantees.
+    Raises ValueError('Invalid mult_idx.') unless 1 <= mult_idx <= m, where m
+    is the number of copies of sum_irrep in the decomposition of
+    product_irreps. If sum_irrep does not occur at all, the highest-weight
+    computation raises its own ValueError first.
     """
 
-    # Normalize sum_iweight to sum_irrep. Return CGCs if already computed.
-
-    sum_irrep = normalize_iweight(sum_iweight)
-    cache_dir = _resolve_cache_dir()
-    if cache_dir is not None:
-        lower_weight_cgc_data_path = cache_dir / str(product_iweights) / f'lower_weight_CGC_{(sum_irrep, mult_idx)}'
-        if lower_weight_cgc_data_path.exists():
-            with open(lower_weight_cgc_data_path, 'rb') as fp:
-                return load(fp)
+    product_iweights = list(product_irreps)
 
     # The CGCs for the highest-weight state of sum_irrep are required.
     try:
-        highest_dict = calc_highest_weight_cgcs(product_iweights, sum_irrep)[mult_idx]
+        highest_dict = _highest_weight_cgcs(product_irreps, sum_irrep)[mult_idx]
     except KeyError:
         raise ValueError('Invalid mult_idx.')
 
@@ -581,15 +558,26 @@ def calc_lower_weight_cgcs(product_iweights: list[tuple], sum_iweight: tuple, mu
                         continue    
                 cgc_dict[child] = nonzero_cgcs
 
-    # Save CGCs.
-
-    if cache_dir is not None:
-        lower_weight_cgc_data_path = cache_dir / str(product_iweights) / f'lower_weight_CGC_{(sum_irrep, mult_idx)}'
-        lower_weight_cgc_data_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(lower_weight_cgc_data_path, 'wb') as fp:
-            dump(cgc_dict, fp)
-
     return cgc_dict
+
+
+def _highest_weight_cgcs(product_irreps: Sequence[IrrepWeight],
+                         sum_irrep: IrrepWeight) -> HighestWeightTable:
+    """Cached. Returns the shared table: callers must not mutate it, and
+    product_irreps must already be sorted (calc_cgcs guarantees both)."""
+    key = CacheKey.highest(product_irreps, sum_irrep, EPS)
+    return _cache.get_or_compute(key, lambda: _compute_highest_weight_cgcs(key.product, key.sum_irrep))
+
+
+def _lower_weight_cgcs(product_irreps: Sequence[IrrepWeight],
+                       sum_irrep: IrrepWeight, mult_idx: int) -> LowerWeightTable:
+    """Cached. Returns the shared table: callers must not mutate it, and
+    product_irreps must already be sorted (calc_cgcs guarantees both)."""
+    key = CacheKey.lower(product_irreps, sum_irrep, mult_idx, EPS)
+    # A plain int for the computation; CacheKey.lower has already rejected
+    # non-integer values.
+    copy_idx = int(mult_idx)
+    return _cache.get_or_compute(key, lambda: _compute_lower_weight_cgcs(key.product, key.sum_irrep, copy_idx))
 
 
 def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: int=None, sum_state: int=None, product_state: tuple=None) -> dict:
@@ -601,16 +589,23 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     sum_state is an integer indexing the basis state of sum_iweight.
     product_state is a product basis state of product_iweights.
 
-    CGCs are saved in CGC_Data. To reduce redundant computations,
+    Computed CGC tables are cached, in memory and (unless disabled) on disk;
+    see pyclebsch.cache. To reduce redundant computations,
     product_iweights are sorted; computed CGCs are then returned with
     product basis states unsorted according to the input product_iweights.
+
+    This is the public entry point for CGCs. Every dict it returns is newly
+    built, so the returned tables are the caller's to modify.
     """
     # Convert entries to plain ints before anything else, so that invalid
     # input raises TypeError with no side effects, and numpy integers share
     # cache entries (and result keys) with the equivalent plain ints.
     product_iweights = [standardize_iweight_type(iweight) for iweight in product_iweights]
     if sum_iweight is not None:
-        sum_iweight = standardize_iweight_type(sum_iweight)
+        # Normalized here, so that calls naming the same irrep by different
+        # i-weights share cache entries without relying on later code to
+        # normalize.
+        sum_iweight = normalize_iweight(standardize_iweight_type(sum_iweight))
 
     # Normalize product_iweights.
     N = len(product_iweights[0])
@@ -652,7 +647,7 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     # Returns specific CGC of a product basis state.
     if None not in {sum_iweight,mult_idx,sum_state,product_state}:
         try:
-            lower_dict = calc_lower_weight_cgcs(product_irreps, sum_iweight, mult_idx)
+            lower_dict = _lower_weight_cgcs(product_irreps, sum_iweight, mult_idx)
             lower_dict = {reorder(P): lower_dict[sum_state][P] for P in lower_dict[sum_state]}
             if product_state in lower_dict:
                 return lower_dict[product_state]
@@ -664,7 +659,7 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     # Returns CGCs of a sum basis state.
     elif None not in {sum_iweight,mult_idx,sum_state}:
         try:
-            lower_dict = calc_lower_weight_cgcs(product_irreps, sum_iweight, mult_idx)
+            lower_dict = _lower_weight_cgcs(product_irreps, sum_iweight, mult_idx)
             lower_dict = {reorder(P): lower_dict[sum_state][P] for P in lower_dict[sum_state]}
             return lower_dict
         except KeyError:
@@ -672,7 +667,7 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     
     # Returns CGCs of a direct-sum irrep.
     elif None not in {sum_iweight,mult_idx}:
-        lower_dict = calc_lower_weight_cgcs(product_irreps, sum_iweight, mult_idx)
+        lower_dict = _lower_weight_cgcs(product_irreps, sum_iweight, mult_idx)
         lower_dict = {S: {reorder(P): lower_dict[S][P] for P in lower_dict[S]} for S in lower_dict}
         return lower_dict
     
@@ -682,7 +677,7 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
         multiplicity = find_direct_sum(product_iweights, sum_iweight)
         if multiplicity==0: raise ValueError('sum_iweight not in product_iweights decomposition.')
         for a in range(1,multiplicity+1):
-            lower_dict = calc_lower_weight_cgcs(product_irreps, sum_iweight, a)
+            lower_dict = _lower_weight_cgcs(product_irreps, sum_iweight, a)
             lower_dict = {S: {reorder(P): lower_dict[S][P] for P in lower_dict[S]} for S in lower_dict}
             cgc_dict[a] = lower_dict
         return cgc_dict
@@ -694,7 +689,7 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
         for sum_irrep in decomposition:
             multiplicity = decomposition[sum_irrep]
             for a in range(1,multiplicity+1):
-                lower_dict = calc_lower_weight_cgcs(product_irreps, sum_irrep, a)
+                lower_dict = _lower_weight_cgcs(product_irreps, sum_irrep, a)
                 lower_dict = {S: {reorder(P): lower_dict[S][P] for P in lower_dict[S]} for S in lower_dict}
                 cgc_dict[sum_irrep][a] = lower_dict
         return dict(cgc_dict)

@@ -22,7 +22,7 @@ def normalize_iweight(iweight: IrrepWeight) -> IrrepWeight:
     last = iweight[-1]
     return tuple(j - last for j in iweight)
 
-def standardize_iweight_type(iweight: Sequence[Integral]) -> IrrepWeight:
+def standardize_iweight_type(iweight: Sequence[int]) -> IrrepWeight:
     """Return iweight as a tuple of plain Python ints, with values unchanged.
 
     Every entry must be an integer (numbers.Integral, which includes numpy

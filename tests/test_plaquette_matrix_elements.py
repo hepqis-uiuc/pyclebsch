@@ -105,9 +105,12 @@ def test_calc_plaquette_elements_parallelize_consistency(
 ):
     """parallelize=True must produce the same dict as parallelize=False.
 
-    The sequential fixture has already populated the on-disk CGC cache, so the
-    multiprocessing workers will read from cache rather than recompute (avoiding
-    the parallel-pickle race noted in SKILL.md).
+    The sequential fixture has already filled the in-memory CGC cache. Under
+    the fork start method, the workers inherit it, so they neither recompute
+    nor touch the disk. Under spawn or forkserver, the workers start with an
+    empty memory cache and do not see this module's tmp cache directory: they
+    use ./CGC_Data in the working directory, so the comparison depends on
+    what that holds.
     """
     sites, plaquettes, truncation_irreps, singlets, conj_dict = lattice_objects
     for P in sorted(plaquettes.keys()):

@@ -20,6 +20,7 @@ SU(N) Clebsch-Gordan coefficient computation library with lattice gauge theory a
 
 ### Core (`pyclebsch/`)
 - `cgc.py` — CGC calculation (highest-weight null space, ladder descent)
+- `cache.py` — CGC table cache: in-memory tier plus optional disk tier, `set_cache_dir` and related API
 - `su_n_operators.py` — Irrep dimensions, GT patterns, ladder ops, decompositions, plethysms
 - `symmetric_group/` — Young tableaux, symmetrizers, plethysm utilities
 

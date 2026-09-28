@@ -1,7 +1,14 @@
-import pytest
+import copy
+import dataclasses
+from collections import Counter
 from pathlib import Path
 
+import pytest
+
 import pyclebsch.cgc as cgc
+from pyclebsch import cache as cgc_cache
+from pyclebsch.matrix_elements.lattice_data import irreps_and_singlets, sites_links_and_plaquettes
+from pyclebsch.matrix_elements.plaquette_matrix_elements import calc_plaquette_elements
 
 
 @pytest.fixture(autouse=True)
@@ -101,7 +108,9 @@ def test_numpy_and_int_iweights_share_entry(tmp_path):
     cache = tmp_path / "CGC_Data"
     cgc.set_cache_dir(cache)
     int_result = cgc.calc_cgcs([(1, 0, 0), (1, 1, 0)])
+    before = cgc.cache_stats()
     numpy_result = cgc.calc_cgcs([tuple(np.array([1, 0, 0])), tuple(np.array([1, 1, 0]))])
+    assert _stats_since(before)["computed"] == 0
     assert len(_product_dirs(cache)) == 1
     assert numpy_result == int_result
     assert all(type(entry) is int for key in numpy_result for entry in key)
@@ -119,3 +128,200 @@ def test_float_iweights_rejected_without_side_effects(tmp_path, monkeypatch):
         cgc.calc_cgcs([(1.0, 0.0, 0.0), (1.0, 1.0, 0.0)])
     assert not cache.exists() or not any(cache.iterdir())
     assert not any(work.iterdir())
+
+
+# --- Memory tier ---
+
+# Lattice-code parameters, as in tests/test_plaquette_matrix_elements.py.
+FORDER = [1, 2, 3, -1, -2, -3]
+N_COLORS = 3
+EPS = 1e-10
+PRES = 10
+
+# Distinct tables (highest- and lower-weight) that the L1 matrix elements
+# need: a fresh disk cache holds this many files after one serial L1 run.
+# The test checks the computation count against the files actually written
+# as well, so a mismatch with this number means the workload changed.
+L1_DISTINCT_TABLES = 19
+
+# Largest difference allowed between two computations of the same CGCs by the
+# same code. Repeated runs agree to ~1e-15 (differences of 4.4e-16 were seen
+# between runs of the lattice workloads); a stale or corrupted table differs
+# by O(0.1-1).
+RECOMPUTE_TOL = 1e-12
+
+
+def _stats_since(before: "cgc_cache.CacheStats") -> dict[str, int]:
+    """Change in every cache counter since the snapshot before."""
+    now = cgc.cache_stats()
+    return {f.name: getattr(now, f.name) - getattr(before, f.name)
+            for f in dataclasses.fields(now)}
+
+
+def _max_abs_difference(a, b) -> float:
+    """Largest absolute difference between two nested CGC results. A key
+    missing on one side counts as an empty dict or a zero coefficient."""
+    if isinstance(a, dict) or isinstance(b, dict):
+        a = a if isinstance(a, dict) else {}
+        b = b if isinstance(b, dict) else {}
+        return max((_max_abs_difference(a.get(k), b.get(k)) for k in a.keys() | b.keys()),
+                   default=0.0)
+    return abs((a or 0.0) - (b or 0.0))
+
+
+def _l1_matrix_elements() -> dict:
+    """Serial matrix elements of every plaquette of the 2x2x1 lattice,
+    periodic in x and y, T truncation cutoff 1."""
+    sites, _links, plaquettes = sites_links_and_plaquettes([2, 2, 1], [True, True, False], FORDER)
+    truncation_irreps, singlets, conj_dict = irreps_and_singlets(N_COLORS, sites, "T", 1)
+    return {P: calc_plaquette_elements(N_COLORS, P, sites, plaquettes, truncation_irreps, singlets,
+                                       conj_dict, FORDER, EPS, PRES, parallelize=False)
+            for P in sorted(plaquettes)}
+
+
+@pytest.fixture
+def memory_limit_restored():
+    """Remove any memory cap a test sets."""
+    yield
+    cgc_cache.set_memory_cache_limit(None)
+
+
+def test_memory_tier_computes_each_entry_once(tmp_path):
+    """Each distinct table is computed once per process, however many
+    calc_cgcs calls need it."""
+    cache = tmp_path / "CGC_Data"
+    cgc.set_cache_dir(cache)
+    before = cgc.cache_stats()
+    first = _l1_matrix_elements()
+    first_run = _stats_since(before)
+    files = [f for f in cache.rglob("*") if f.is_file()]
+    assert first_run["computed"] == len(files) == L1_DISTINCT_TABLES
+    assert first_run["disk_writes"] == first_run["computed"]
+    assert first_run["memory_hits"] > first_run["computed"]
+
+    before = cgc.cache_stats()
+    second = _l1_matrix_elements()
+    second_run = _stats_since(before)
+    assert second_run["computed"] == 0
+    assert second_run["disk_hits"] == 0
+    assert second_run["memory_hits"] > 0
+    assert _max_abs_difference(first, second) == 0
+
+
+def test_memory_results_match_fresh_computation():
+    """A result served from memory equals one computed after the memory tier
+    is cleared."""
+    cgc.set_cache_dir(None)
+    products = [
+        [(2, 1, 0), (2, 1, 0)],
+        [(1, 0, 0), (1, 0, 0), (1, 0, 0)],
+        [(1, 1, 0), (1, 0, 0)],
+        [(1, 0, 0), (1, 1, 0), (1, 0, 0), (1, 1, 0)],
+    ]
+    for product in products:
+        cgc.calc_cgcs(product)
+        before = cgc.cache_stats()
+        cached = cgc.calc_cgcs(product)
+        assert _stats_since(before)["computed"] == 0
+        cgc.clear_memory_cache()
+        before = cgc.cache_stats()
+        fresh = cgc.calc_cgcs(product)
+        assert _stats_since(before)["computed"] > 0
+        assert _max_abs_difference(cached, fresh) <= RECOMPUTE_TOL
+
+
+def _vandalize(result) -> None:
+    """Overwrite every coefficient and add a junk key at every nesting level."""
+    for key, value in list(result.items()):
+        if isinstance(value, dict):
+            _vandalize(value)
+        else:
+            result[key] = 99.0
+    result["junk"] = 99.0
+
+
+def test_calc_cgcs_results_do_not_alias_cache():
+    """Mutating anything calc_cgcs returns leaves later results unchanged,
+    for every call form that returns a dict."""
+    cgc.set_cache_dir(None)
+    product, sum_irrep, copy_idx, state = [(2, 1, 0), (2, 1, 0)], (2, 1, 0), 2, 3
+    call_forms = {
+        "all irreps": lambda: cgc.calc_cgcs(product),
+        "one irrep": lambda: cgc.calc_cgcs(product, sum_irrep),
+        "one copy": lambda: cgc.calc_cgcs(product, sum_irrep, copy_idx),
+        "one state": lambda: cgc.calc_cgcs(product, sum_irrep, copy_idx, state),
+    }
+    snapshots = {name: copy.deepcopy(call()) for name, call in call_forms.items()}
+    for call in call_forms.values():
+        _vandalize(call())
+    for name, call in call_forms.items():
+        assert _max_abs_difference(call(), snapshots[name]) <= RECOMPUTE_TOL, name
+
+
+def test_lower_level_functions_not_public():
+    """calc_cgcs is the only public way to get CGCs."""
+    assert not hasattr(cgc, "calc_highest_weight_cgcs")
+    assert not hasattr(cgc, "calc_lower_weight_cgcs")
+
+
+def test_set_cache_dir_clears_memory(tmp_path):
+    """After switching directories, tables are written to the new one rather
+    than served from memory."""
+    cgc.set_cache_dir(tmp_path / "first")
+    assert cgc.check_cgcs([(2, 1, 0), (2, 1, 0)])
+    cgc.set_cache_dir(tmp_path / "second")
+    assert cgc.check_cgcs([(2, 1, 0), (2, 1, 0)])
+    assert any(f.is_file() for f in (tmp_path / "second").rglob("*"))
+
+
+def _synthetic_key(label: int) -> "cgc_cache.CacheKey":
+    """A distinct key per label; the tables stored under it are synthetic."""
+    return cgc_cache.CacheKey.lower([(label, 0, 0), (label, 0, 0)], (2 * label, 0, 0), 1, EPS)
+
+
+def test_memory_limit_evicts_least_recently_used(memory_limit_restored):
+    """With a cap of 2, the least recently used entry is evicted, and a later
+    request for it recomputes rather than serving anything stale."""
+    cgc.set_cache_dir(None)
+    cgc_cache.set_memory_cache_limit(2)
+    computations = Counter()
+
+    def get(label: int):
+        def compute():
+            computations[label] += 1
+            return {0: {(0, 0): float(label)}}
+        return cgc_cache._cache.get_or_compute(_synthetic_key(label), compute)
+
+    before = cgc.cache_stats()
+    get(1)
+    get(2)
+    get(1)          # hit; 1 becomes the most recently used entry
+    get(3)          # evicts 2, the least recently used
+    assert len(cgc_cache._cache._memory) == 2
+    assert _stats_since(before)["evictions"] == 1
+    assert get(1) == {0: {(0, 0): 1.0}}
+    assert computations[1] == 1
+    assert get(2) == {0: {(0, 0): 2.0}}
+    assert computations[2] == 2
+
+
+def test_memory_limit_results_unchanged(memory_limit_restored):
+    """L1 matrix elements with a small cap equal those with no cap."""
+    cgc.set_cache_dir(None)
+    cgc_cache.set_memory_cache_limit(3)
+    before = cgc.cache_stats()
+    capped = _l1_matrix_elements()
+    assert _stats_since(before)["evictions"] > 0
+    cgc_cache.set_memory_cache_limit(None)
+    cgc.clear_memory_cache()
+    uncapped = _l1_matrix_elements()
+    assert _max_abs_difference(capped, uncapped) <= RECOMPUTE_TOL
+
+
+def test_memory_limit_rejects_invalid_values(memory_limit_restored):
+    """The cap must be None or an integer of at least 1."""
+    cgc_cache.set_memory_cache_limit(5)
+    for invalid in (0, -1, 2.5):
+        with pytest.raises(ValueError):
+            cgc_cache.set_memory_cache_limit(invalid)
+    assert cgc_cache._cache.max_memory_entries == 5

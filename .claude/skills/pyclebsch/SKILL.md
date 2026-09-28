@@ -14,6 +14,7 @@ user_invocable: true
 
 **Repository structure**:
 - `pyclebsch/cgc.py` — CGC computation (highest-weight, lower-weight, validation)
+- `pyclebsch/cache.py` — CGC table cache (in-memory tier, optional disk tier) and its configuration API
 - `pyclebsch/su_n_operators.py` — SU(N) irrep dimensions, GT patterns, ladder operators, decompositions, plethysms, Casimir, Dynkin index
 - `pyclebsch/symmetric_group/tableaux.py` — Young tableaux, partitions, rim hooks
 - `pyclebsch/symmetric_group/young_symmetrizer.py` — Young symmetrizer construction
@@ -121,13 +122,13 @@ Progressive filtering — provide more parameters for more specific results:
 
 **Normalization**: i-weights normalized so last component = 0.
 
-**Caching**: Pickle files in `CGC_Data/[str(sorted_product_irreps)]/` with filenames `highest_weight_CGC_(sum_iweight)` and `lower_weight_CGC_((sum_iweight, mult_idx))`.
+**Caching** (`pyclebsch/cache.py`): every table is computed at most once per process and kept in an in-memory cache (`clear_memory_cache()`, `cache_stats()`, optional `set_memory_cache_limit(n)`). Behind it is a disk cache: pickle files in `<cache dir>/[str(sorted_product_irreps)]/` with filenames `highest_weight_CGC_(sum_iweight)` and `lower_weight_CGC_((sum_iweight, mult_idx))`. The cache dir defaults to `./CGC_Data` in the working directory; `set_cache_dir(path)` changes it, `set_cache_dir(None)` disables the disk cache, and both clear the in-memory cache.
 
 **Only nonzero CGCs stored** (threshold `EPS = 1e-10`).
 
 **Phase convention**: CGC of highest-weight product basis state is positive.
 
-### Highest-Weight Algorithm (`calc_highest_weight_cgcs`)
+### Highest-Weight Algorithm (`_compute_highest_weight_cgcs`, cached via `_highest_weight_cgcs`)
 
 Reference: Eqs. (33)-(34) and Pg. 13 of Alex et al.
 
@@ -141,7 +142,7 @@ Reference: Eqs. (33)-(34) and Pg. 13 of Alex et al.
 
 **Step 5 — Phase fix**: For each multiplicity, find the smallest (in tuple order) product state with nonzero CGC. Flip sign of entire CGC vector if that coefficient is negative.
 
-### Lower-Weight Algorithm (`calc_lower_weight_cgcs`)
+### Lower-Weight Algorithm (`_compute_lower_weight_cgcs`, cached via `_lower_weight_cgcs`)
 
 Reference: Pg. 14 of Alex et al.
 
@@ -484,4 +485,4 @@ All keys are stringified tuples (JSON doesn't preserve Python tuple types).
 
 **Demo**: `uv run -m run.demo`
 
-**CGC cache**: Stored in `CGC_Data/` relative to package root. Delete to force recomputation.
+**CGC cache**: On disk in `CGC_Data/` relative to the working directory (not the package root), unless `set_cache_dir()` points elsewhere. Delete it to force recomputation in later processes; within a process, call `clear_memory_cache()` as well.

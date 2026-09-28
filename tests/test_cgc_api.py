@@ -8,9 +8,10 @@ Covers:
 - print_cgcs smoke tests (captures stdout, ensures non-empty output)
 - Error path on invalid sum_state
 
-The autouse cache_dir fixture redirects the on-disk CGC cache to tmp_path so
-the repo's CGC_Data/ is never written to. The cache survives across tests in
-the module thanks to scope='module'.
+The autouse restore_cache_dir fixture points the on-disk CGC cache at each
+test's tmp_path, so the repo's CGC_Data/ is never written to. Because
+set_cache_dir also clears the in-memory cache, every test starts with an
+empty cache.
 """
 
 import math
@@ -126,6 +127,44 @@ def test_calc_cgcs_zero_for_product_state_with_no_cgc():
     assert result == 0
 
 
+def _flatten(result, prefix=()):
+    """{key path: coefficient} for a nested calc_cgcs result."""
+    if not isinstance(result, dict):
+        return {prefix: result}
+    flat = {}
+    for key, value in result.items():
+        flat.update(_flatten(value, prefix + (key,)))
+    return flat
+
+
+# Largest difference allowed between two computations of the same CGCs.
+# Repeated computations agree to ~1e-15; a wrong table differs by O(0.1-1).
+SAME_CGC_TOL = 1e-12
+
+
+@pytest.mark.parametrize("normalized, shifted", [
+    ((0, 0, 0), (1, 1, 1)),   # singlet of 3⊗3̄
+    ((2, 1, 0), (3, 2, 1)),   # octet of 3⊗3̄
+])
+def test_calc_cgcs_normalizes_sum_iweight(normalized, shifted):
+    """An i-weight and its shift by a constant name the same irrep. Every call
+    form that takes sum_iweight gives the same result for both, and the
+    shifted call reuses the tables cached for the normalized one."""
+    call_forms = [
+        (),              # one irrep
+        (1,),            # one copy
+        (1, 0),          # one state
+        (1, 0, (0, 0)),  # one coefficient
+    ]
+    for extra in call_forms:
+        expected = _flatten(cgc.calc_cgcs(PRODUCT_3X3BAR, normalized, *extra))
+        computed_before = cgc.cache_stats().computed
+        actual = _flatten(cgc.calc_cgcs(PRODUCT_3X3BAR, shifted, *extra))
+        assert cgc.cache_stats().computed == computed_before, extra
+        assert actual.keys() == expected.keys(), extra
+        assert actual == pytest.approx(expected, abs=SAME_CGC_TOL), extra
+
+
 # ---------- Singlet (1/sqrt(3)) values for SU(3) 3⊗3̄ ----------
 
 def test_singlet_has_three_nonzero_cgcs():
@@ -160,7 +199,7 @@ def test_singlet_phase_convention_smallest_product_state_is_positive():
     """Phase convention: the smallest (tuple-sorted) product_state with
     nonzero CGC has a positive coefficient.
 
-    The source's phase-fix step (in calc_highest_weight_cgcs) sorts product
+    The source's phase-fix step (in _compute_highest_weight_cgcs) sorts product
     states tuple-wise and flips signs so that the smallest has positive CGC.
     """
     singlet = cgc.calc_cgcs(
@@ -173,8 +212,8 @@ def test_singlet_phase_convention_smallest_product_state_is_positive():
 
 # ---------- Lower-weight algorithm path ----------
 # SU(3) 3⊗3 = 6 ⊕ 3̄. The 6 has dimension 6 (sum_states 0..5).
-# sum_state=0 is HW (uses calc_highest_weight_cgcs). sum_state>0 exercises
-# the lower-weight descent (calc_lower_weight_cgcs).
+# sum_state=0 is HW (uses _compute_highest_weight_cgcs). sum_state>0 exercises
+# the lower-weight descent (_compute_lower_weight_cgcs).
 
 PRODUCT_3X3 = [(1, 0, 0), (1, 0, 0)]
 

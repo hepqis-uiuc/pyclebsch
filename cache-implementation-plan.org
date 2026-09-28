@@ -7,15 +7,20 @@
 decision is made./
 
 - *Stage:* the plan was approved on 2026-09-28 and is frozen; see
-  [[*Workflow rules for implementation sessions][Workflow rules for implementation sessions]] before doing anything. Steps 0
-  and 1 are done. Steps 2–5 have not been started.
-- *Branch:* =feature/cache_improvements=, at =6e9e664= (step 0). Apart
-  from step 0, its library code is identical to =develop= at =cb35b4e=.
+  [[*Workflow rules for implementation sessions][Workflow rules for implementation sessions]] before doing anything. Steps
+  0–2 are done. Steps 3–5 have not been started.
+- *Branch:* =feature/cache_improvements=, at =6ae563d= (step 1). Apart
+  from steps 0 and 1, its library code is identical to =develop= at
+  =cb35b4e=.
   Line numbers quoted in this plan refer to that revision; recheck them
   before editing, in case =develop= has moved.
 - *Uncommitted work in the working tree* (the reviewer commits):
-  - step 1: changes to =pyclebsch/su_n_operators.py=, =pyclebsch/cgc.py=,
-    =tests/test_su_n_operators.py= and =tests/test_cgc_cache.py=.
+  - step 2: changes to =pyclebsch/cache.py=, =pyclebsch/cgc.py=,
+    =pyclebsch/__init__.py= and =tests/test_cgc_cache.py=, plus an annotation
+    change to =pyclebsch/su_n_operators.py=, and stale-reference fixes in
+    =tests/test_cgc_api.py=, =tests/test_plaquette_matrix_elements.py=,
+    =.claude/skills/pyclebsch/SKILL.md= and =CLAUDE.md= (see Step 2:
+    deviations).
 - *Baseline for A2:* =out/cache-redesign-baseline/=, which is gitignored (by
   =out/*=) and so exists only in this checkout. It holds the step-0 reference
   outputs (one pickle per workload), =provenance.json= (commit, Python
@@ -38,10 +43,10 @@ decision is made./
 | Step | Content                            | Status      | Commit      | Notes                                          |
 |------+------------------------------------+-------------+-------------+------------------------------------------------|
 |    0 | Baseline and golden-value test     | done        | =6e9e664=   | Deviation: see [[*Step 0: deviations][Step 0: deviations]] |
-|    1 | Input type standardization         | done        | uncommitted | Deviation: see [[*Step 1: deviations][Step 1: deviations]] |
-|    2 | Memory tier                        | not started |             |                                                |
-|    3 | Disk-tier hardening                | not started |             |                                                |
-|    4 | Defaults and propagation           | not started |             |                                                |
+|    1 | Input type standardization         | done        | =6ae563d=   | Deviation: see [[*Step 1: deviations][Step 1: deviations]] |
+|    2 | Memory tier                        | done        | uncommitted | Deviation: see [[*Step 2: deviations][Step 2: deviations]] |
+|    3 | Disk-tier hardening                | not started |             | Before starting: see [[*Step 3: references to update][Step 3: references to update]] |
+|    4 | Defaults and propagation           | not started |             | Before starting: see [[*Step 4: references to update][Step 4: references to update]] |
 |    5 | Docs, scripts and version          | not started |             |                                                |
 
 ** Workflow rules for implementation sessions
@@ -60,10 +65,15 @@ that implements it follows these rules:
    work deviates from them. The plan body records what was approved, and
    deviations are recorded here.
 4. *When the step's work is done:*
-   1. run the full test suite (=uv run -m pytest -q=) and the A2 check
-      (=uv run python out/cache-redesign-baseline/baseline.py compare=);
+   1. run the full test suite (=uv run -m pytest -q=), the A2 check
+      (=uv run python out/cache-redesign-baseline/baseline.py compare=), and
+      the type checker ty on the changed modules
+      (=uv tool run ty check <files>=; ty is run ad hoc, not added to the
+      project). ty finds =.venv= without configuration. Known diagnostics
+      that predate this work are listed under Step 2: deviations. Any other
+      diagnostic in changed code is fixed, or reported to the reviewer;
    2. report to the reviewer what was done: files changed, test results, the
-      A2 result, and any deviation from the plan;
+      A2 result, the ty result, and any deviation from the plan;
    3. then update this Work status section, and only this section:
       - the step's row in the table (status, and a Notes entry that
         summarizes any deviation or points to its subsection);
@@ -145,6 +155,259 @@ that implements it follows these rules:
   - every in-repo caller of =calc_cgcs= (=lattice_data.py=,
     =plaquette_matrix_elements.py=, =check_cgcs=, =print_cgcs=, =run/demo.py=)
     passes integer tuples, so none is affected by the new =TypeError=.
+
+** Step 2: deviations
+
+- *=set_cache_dir= clears the memory tier from step 2 on,* not from step 4.
+  The plan lists =test_set_cache_dir_clears_memory= among the memory-tier
+  tests that step 2 must pass, and schedules the clearing in step 4. Without
+  the clearing, existing tests that switch directories would fail as soon as
+  the memory tier exists. The clearing happens in =CGCCache.set_disk_dir=.
+  Step 4 still owns the rest of =set_cache_dir='s new behavior: path
+  resolution, the explicit-path rules and the environment variable.
+- *The legacy disk code, as moved into =cache.py=:*
+  - File names are unchanged. =CacheKey.relative_path= rebuilds today's
+    names, e.g. =[(1, 0, 0), (1, 1, 0)]/lower_weight_CGC_((2, 1, 0), 1)=. The
+    product directory is =str(list(key.product))=, because the key stores
+    the product as a tuple and today's name is the =str= of a list. There is
+    no =v<N>/= directory, no hashed fallback, no envelope and no atomic write
+    yet; all of that is step 3.
+  - Reading no longer creates the cache root. The old =_resolve_cache_dir=
+    created it on every lookup; now a directory is created only when an
+    entry is written, by =_write_disk=.
+  - =set_disk_dir= stores =Path(path)= unresolved, and the default is still
+    =Path("./CGC_Data")=, as before. Resolution and the new defaults are step 4.
+- *Left out of =cache.py= until the step that uses them:*
+  - step 3: =CACHE_FORMAT_VERSION=, =MAX_ENTRY_NAME_BYTES=, =CGCCacheWarning=,
+    =CacheKey.as_header=, =_installed_commit=, =_installed_version=, and the
+    =disk_rejected= counter in =CacheStats=;
+  - step 4: =ENV_VAR=, =_resolve_disk_dir=, =_disk_dir_from_env=, =init_worker=
+    and =pool_kwargs=.
+  The module docstring and the =CGC_CACHE_VERSION= comment describe the
+  step-2 state. Step 3 extends them with the plan's disk-format text.
+- *A new =TypeError= for a non-integer =mult_idx=,* raised by
+  =CacheKey.lower=. The plan types =mult_idx= as =Integral= but says nothing
+  about other types. Before step 2, =calc_cgcs(..., mult_idx=1.0)= happened
+  to work, because =1.0= finds the dict key =1=; now it raises =TypeError=.
+  No caller in the repository passes a non-integer, and all tests and the A2
+  check pass. The reviewer may want to confirm this is acceptable.
+- *=pyclebsch/__init__.py= exports were updated in step 2.* The plan assigns
+  no step to them; they point at =pyclebsch.cache= now that the functions
+  live there.
+- *Tests, compared with the plan's descriptions:*
+  - =test_calc_cgcs_results_do_not_alias_cache= compares against its
+    snapshots to within =RECOMPUTE_TOL= (1e-12), not exactly. Recomputing a
+    table without the cache is not bit-for-bit reproducible: two uncached
+    =calc_cgcs([(2, 1, 0), (2, 1, 0)])= calls differ by 2.2e-16. A vandalized
+    value, or an inserted junk key, still shows up as a difference of about 99.
+  - =test_memory_tier_computes_each_entry_once= runs L1 with a fresh disk
+    cache, and checks that the number of computations equals both the
+    number of files written and =L1_DISTINCT_TABLES= (19).
+  - =test_memory_limit_evicts_least_recently_used= drives
+    =_cache.get_or_compute= with synthetic keys and tables. It uses one hit
+    (entry 1 touched before entry 3 is added) to check least-recently-used
+    order, rather than insertion order.
+  - =test_numpy_and_int_iweights_share_entry= now also has the plan's
+    assertion that the numpy call adds 0 computations, alongside step 1's
+    one-product-directory check.
+- *Stale references to the old caching behavior, fixed at the reviewer's
+  request (2026-09-28).* A search found these, which steps 1–2 had made stale
+  or which were already wrong:
+  - the =calc_cgcs= docstring ("CGCs are saved in CGC_Data") now says
+    tables are cached in memory and, unless disabled, on disk, and points
+    to =pyclebsch.cache=;
+  - =tests/test_cgc_api.py=:
+    - the comments at lines 163 and 176–177 now name
+      =_compute_highest_weight_cgcs= and =_compute_lower_weight_cgcs=;
+    - the module docstring described a module-scoped =cache_dir= fixture.
+      The fixture is =restore_cache_dir=, function-scoped, and now also
+      clears the memory tier;
+  - the docstring of
+    =test_calc_plaquette_elements_parallelize_consistency= (in
+    =tests/test_plaquette_matrix_elements.py=) now describes both cases:
+    - under =fork=, the workers inherit the parent's filled memory tier and
+      never touch the disk. A check that marked every worker disk read and
+      write found none, and parallel equalled sequential exactly;
+    - under =spawn= or =forkserver=, they use =./CGC_Data= in the working
+      directory. The plan corrects this docstring again once step 4 has
+      landed.
+    The old parenthetical "(avoiding the parallel-pickle race noted in
+    SKILL.md)" was dropped at the reviewer's request. Step 3 makes the race
+    impossible, and the SKILL.md caveat it pointed to is removed in step 5;
+  - =.claude/skills/pyclebsch/SKILL.md=:
+    - =cache.py= added to the repository-structure list;
+    - the Caching paragraph now describes the memory tier and the
+      =set_cache_dir= semantics;
+    - the two algorithm headings name the private functions;
+    - "relative to package root" corrected to the working directory;
+  - =CLAUDE.md=: =cache.py= added to the architecture list.
+  Some of these are items in the plan's files table that the plan would
+  otherwise leave to step 5. Step 5 still has to update the SKILL.md and
+  README cache text for the step-4 defaults.
+
+  Left unchanged because they are still accurate at step 2:
+  - the README, and the =run/demo.py= banner: the disk tier is still on by
+    default at =./CGC_Data=;
+  - the four =EOFError= notes (=plaquette_matrix_elements.py:274=,
+    =run/su_n_wilson_loop.py:63=, =run/gen_ymcirc_data.py:299=, the SKILL.md
+    Parallelization caveat): disk writes are not atomic until step 3;
+  - the old API tests at the top of =tests/test_cgc_cache.py=, which step 4
+    replaces.
+  After these changes: 219 passed, the A2 check passes, and ty reports the
+  same 19 known diagnostics.
+- *A shared dict inside the memory tier* (not a deviation, recorded for later
+  steps): the lower-weight computation stores the highest-weight table's
+  =[mult_idx]= dict itself as its state 0 (=cgc_dict[0] = highest_dict=). So
+  in memory, the two cached tables share that dict. Nothing changes it, and
+  =calc_cgcs= builds new dicts for everything it returns. It matters only if
+  a future change starts modifying cached tables.
+- *Checks run in step 2:*
+  - red first: 7 of the 8 new tests failed (missing =cache_stats=,
+    =set_memory_cache_limit=, and the still-public lower-level functions).
+    =test_calc_cgcs_results_do_not_alias_cache= and
+    =test_set_cache_dir_clears_memory= passed before the change, as tests
+    that guard against a naive memory tier should;
+  - negative controls, each making its test fail:
+    - =CGCCache.clear_memory= made a no-op, for
+      =test_set_cache_dir_clears_memory=;
+    - memory hits not refreshing recency (first-in-first-out order), for
+      =test_memory_limit_evicts_least_recently_used=;
+    - a =calc_cgcs= that returns the stored lower-weight table for the "one
+      copy" call form, for =test_calc_cgcs_results_do_not_alias_cache=. It
+      fails with a =TypeError= from the junk key rather than at its
+      assertion, but it fails;
+  - green: 219 passed (211 plus 8 new);
+  - A2 =compare=: all three workloads pass, max difference 4.4e-16. L3 site
+    factors on an empty disk cache took 1.25 s, against 1.57–1.68 s in
+    steps 0 and 1 (Linux container, one run each; indicative only).
+  - type checking: see the next item.
+- *Type annotations changed after type checking* (reviewer approved,
+  2026-09-28). ty (=uv tool run ty check=, version 0.0.84) and pyright
+  agree that three of the plan's annotations are wrong for static checkers,
+  although the code runs correctly:
+  - *=numbers.Integral= in annotations.* Static checkers do not treat =int=
+    as a =numbers.Integral=, so every call with plain ints was flagged.
+    =standardize_iweight_type=, =CacheKey.highest=, =CacheKey.lower=,
+    =_key_iweight= and =_key_product= are now annotated with plain =int=
+    (=Sequence[int]=, =mult_idx: int=). The runtime
+    =isinstance(..., Integral)= checks are unchanged. They still accept numpy
+    integers, converting them, as release note 6 promises, and still reject
+    floats. So the annotation states the preferred type and is narrower than
+    what is accepted: a downstream project that type-checks a call passing
+    =np.int64= would get a static warning for a call that works.
+    =typing.SupportsIndex= was tried first. The reviewer chose =int= for
+    readability, after a check showed that pyclebsch's own code only ever
+    passes plain =int=s: the suite, run with a check that accepts only exact
+    =int=, passed.
+  - *=key.mult_idx= passed to the computation.* It is typed =int | None=,
+    because highest-weight keys have none. =_lower_weight_cgcs= now passes
+    =copy_idx = int(mult_idx)= to =_compute_lower_weight_cgcs= instead.
+  - *=tuple[IrrepWeight, ...]= for the cached wrappers' =product_irreps=.*
+    =calc_cgcs= passes a list, so =_highest_weight_cgcs= and
+    =_lower_weight_cgcs= now take =Sequence[IrrepWeight]=.
+  After these changes, the suite (219 passed) and the A2 check (max
+  difference 4.4e-16) still pass.
+- *=calc_cgcs= normalizes =sum_iweight= itself* (reviewer's request,
+  2026-09-28). The plan has =calc_cgcs= standardize the type of
+  =sum_iweight=. Normalization happened only further down, when the cache key
+  was built (=_key_iweight=) and inside =find_direct_sum=. =calc_cgcs= now
+  applies =normalize_iweight(standardize_iweight_type(sum_iweight))=, so it no
+  longer relies on that later code.
+  - The CGC values turn out not to depend on the normalization: the
+    computation is unchanged by shifting =sum_irrep= by a constant. What
+    normalization buys is cache sharing. Without it, =(3, 2, 1)= and
+    =(2, 1, 0)= would get different keys, and the same table would be
+    computed and stored twice.
+  - New test: =test_calc_cgcs_normalizes_sum_iweight= in
+    =tests/test_cgc_api.py=, for the singlet and the octet of 3 ⊗ 3̄. For
+    every call form that takes =sum_iweight=, the shifted call gives the
+    same result and adds 0 computations. Red/green was shown with the key's
+    normalization turned off in memory: before the change, the shifted call
+    computed 4 tables instead of 2; after it, the test passed.
+  - After the change: 221 passed, the A2 check passes, and ty reports the
+    same 19 known diagnostics.
+- *Known ty diagnostics, left alone by the reviewer's decision (2026-09-28).*
+  =uv tool run ty check pyclebsch/cache.py pyclebsch/cgc.py
+  pyclebsch/su_n_operators.py= reports 19 diagnostics. =cache.py= has none.
+  - 17 exist unchanged in =develop= at =cb35b4e=:
+    - =su_n_operators.py:16=: =IrrepWeight = tuple[int, int, ...]= is not a
+      valid type expression. ty reads it as a tuple of exactly three
+      elements;
+    - =su_n_operators.py:459= and =su_n_operators.py:494=;
+    - =cgc.py=: the =young_symmetrizer= argument (=:277=), the =list.count=
+      calls (=:624–630=), the =None= defaults of =calc_cgcs= and =print_cgcs=
+      (=:583=, =:698=), and =calc_cgcs= returning a number from a function
+      annotated =-> dict= (=:653=, =:655=).
+  - 2 appear in code changed by steps 1–2, but are caused by the invalid
+    =IrrepWeight= alias: =su_n_operators.py:40=, where
+    =standardize_iweight_type= returns =tuple[int, ...]=, and =cgc.py:650=,
+    where =calc_cgcs= passes its product list to =_lower_weight_cgcs=. They
+    go away once line 16 is corrected, which the plan does not cover.
+  Line numbers are those after step 2, including every follow-up change
+  recorded in this section. Later edits shift them, so match diagnostics by
+  message rather than by line number alone.
+
+** Step 3: references to update
+
+References that describe the step-2 disk tier, found in the stale-reference
+search after step 2. Line numbers are those after step 2. Step 3 changes the
+on-disk layout (=v<CGC_CACHE_VERSION>/=, envelope, hashed fallback names) and
+makes writes atomic, which ends the parallel =EOFError=. So these become
+stale:
+- *Layout descriptions:*
+  - the =pyclebsch/cache.py= module docstring (line 1) and the
+    =CGC_CACHE_VERSION= comment. The plan's sketch has the text for both
+    (see also Step 2: deviations);
+  - the =CacheKey.relative_path= docstring example (=cache.py:72=), which
+    must say the path sits under =v<CGC_CACHE_VERSION>/=, and when a hashed
+    name replaces it;
+  - =.claude/skills/pyclebsch/SKILL.md:125=, the Caching paragraph. The
+    path =<cache dir>/[str(sorted_product_irreps)]/= gains the =v<N>/=
+    level, files become pickled envelopes rather than bare tables, and long
+    names are hashed.
+- *=EOFError= notes*, which are no longer true once writes are atomic and
+  corrupt entries are recomputed:
+  - =pyclebsch/matrix_elements/plaquette_matrix_elements.py:274= (the plan
+    removes it in step 4, with the =Pool= change);
+  - =run/su_n_wilson_loop.py:63= and =run/gen_ymcirc_data.py:299= (the plan
+    removes these in step 5);
+  - =.claude/skills/pyclebsch/SKILL.md:400=, the Parallelization caveat
+    (step 5 in the plan).
+  Between step 3 and the step that removes each note, it is wrong. Removing
+  them in step 3 instead is a deviation for the reviewer to decide.
+
+** Step 4: references to update
+
+References that describe the step-2 defaults, found in the same search. Line
+numbers are those after step 2. Step 4 turns the disk tier off by default,
+removes the default location, resolves paths when they are set, and adds
+=PYCLEBSCH_CACHE_DIR= and worker propagation. So these become stale:
+- *"On by default at =./CGC_Data=":*
+  - =pyclebsch/cache.py:6=, the module docstring (the plan's sketch has the
+    step-4 text), and the =set_cache_dir= / =get_cache_dir= docstrings;
+  - =pyclebsch/cgc.py:592=, the =calc_cgcs= docstring: "on disk (unless
+    disabled)" should become "on disk, if a directory is configured";
+  - =.claude/skills/pyclebsch/SKILL.md:125=, the last sentence of the
+    Caching paragraph, and =SKILL.md:488=, the "CGC cache" line;
+  - =README.md:4= (intro note) and =README.md:26–40= (the "Caching CGC data
+    to disk" section, including the advice at line 40 to configure the
+    cache before anything else). The plan rewrites these in step 5;
+  - =run/demo.py:49–53=, the banner and commented-out calls (step 5 in the
+    plan).
+- *Tests:*
+  - the old API tests at the top of =tests/test_cgc_cache.py=, such as
+    =test_get_cache_dir_default=. The plan's step-4 tests replace them;
+  - the =spawn= / =forkserver= half of the docstring of
+    =test_calc_plaquette_elements_parallelize_consistency=
+    (=tests/test_plaquette_matrix_elements.py=). With =pool_kwargs()= and
+    the environment variable, workers use the parent's directory. The plan
+    corrects this docstring in step 4;
+  - =tests/test_lattice_data.py:20–24=, the =restore_cache_dir= docstring,
+    which says tests that compute CGCs "should call =set_cache_dir(tmp_path
+    / "CGC_Data")= ... to redirect writes". Once the default writes nothing,
+    that call is no longer needed to protect the working directory. The
+    docstring can say so, or be left as harmless advice.
+
 
 * Purpose and scope
 
