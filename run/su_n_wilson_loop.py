@@ -59,10 +59,6 @@ cutoff: The truncation value for a given mode. It can be a positive integer
       'B'-type truncations.
 
 parallelize: Whether to use parallelization in calculating matrix elements.
-            Note that if Clebsch-Gordan coefficients are calculated for the
-            first time, an EOFError may appear when parallelizing the site
-            factor calculations, and the script will have to be ran again to
-            calculate the matrix elements.
 
 generate_plaq_states: Whether to print out the physical plaquette states.
 

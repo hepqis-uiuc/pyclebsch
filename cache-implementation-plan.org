@@ -8,19 +8,16 @@ decision is made./
 
 - *Stage:* the plan was approved on 2026-09-28 and is frozen; see
   [[*Workflow rules for implementation sessions][Workflow rules for implementation sessions]] before doing anything. Steps
-  0–2 are done. Steps 3–5 have not been started.
-- *Branch:* =feature/cache_improvements=, at =6ae563d= (step 1). Apart
-  from steps 0 and 1, its library code is identical to =develop= at
-  =cb35b4e=.
+  0–3 are done. Steps 4–5 have not been started.
+- *Branch:* =feature/cache_improvements=, at =35d1cd1= (step 2). Apart
+  from steps 0–2, its library code is identical to =develop= at =cb35b4e=.
   Line numbers quoted in this plan refer to that revision; recheck them
   before editing, in case =develop= has moved.
 - *Uncommitted work in the working tree* (the reviewer commits):
-  - step 2: changes to =pyclebsch/cache.py=, =pyclebsch/cgc.py=,
-    =pyclebsch/__init__.py= and =tests/test_cgc_cache.py=, plus an annotation
-    change to =pyclebsch/su_n_operators.py=, and stale-reference fixes in
-    =tests/test_cgc_api.py=, =tests/test_plaquette_matrix_elements.py=,
-    =.claude/skills/pyclebsch/SKILL.md= and =CLAUDE.md= (see Step 2:
-    deviations).
+  - step 3: changes to =pyclebsch/cache.py=, =tests/test_cgc_cache.py= and
+    =.claude/skills/pyclebsch/SKILL.md=, plus the removal of the =EOFError=
+    notes from =pyclebsch/matrix_elements/plaquette_matrix_elements.py=,
+    =run/su_n_wilson_loop.py= and =run/gen_ymcirc_data.py=.
 - *Baseline for A2:* =out/cache-redesign-baseline/=, which is gitignored (by
   =out/*=) and so exists only in this checkout. It holds the step-0 reference
   outputs (one pickle per workload), =provenance.json= (commit, Python
@@ -44,8 +41,8 @@ decision is made./
 |------+------------------------------------+-------------+-------------+------------------------------------------------|
 |    0 | Baseline and golden-value test     | done        | =6e9e664=   | Deviation: see [[*Step 0: deviations][Step 0: deviations]] |
 |    1 | Input type standardization         | done        | =6ae563d=   | Deviation: see [[*Step 1: deviations][Step 1: deviations]] |
-|    2 | Memory tier                        | done        | uncommitted | Deviation: see [[*Step 2: deviations][Step 2: deviations]] |
-|    3 | Disk-tier hardening                | not started |             | Before starting: see [[*Step 3: references to update][Step 3: references to update]] |
+|    2 | Memory tier                        | done        | =35d1cd1=   | Deviation: see [[*Step 2: deviations][Step 2: deviations]] |
+|    3 | Disk-tier hardening                | done        | uncommitted | Deviation: see [[*Step 3: deviations][Step 3: deviations]] |
 |    4 | Defaults and propagation           | not started |             | Before starting: see [[*Step 4: references to update][Step 4: references to update]] |
 |    5 | Docs, scripts and version          | not started |             |                                                |
 
@@ -354,6 +351,9 @@ search after step 2. Line numbers are those after step 2. Step 3 changes the
 on-disk layout (=v<CGC_CACHE_VERSION>/=, envelope, hashed fallback names) and
 makes writes atomic, which ends the parallel =EOFError=. So these become
 stale:
+/Status after step 3: all of these are done. The layout descriptions were
+updated, and the =EOFError= notes were removed at the reviewer's request (see
+Step 3: deviations)./
 - *Layout descriptions:*
   - the =pyclebsch/cache.py= module docstring (line 1) and the
     =CGC_CACHE_VERSION= comment. The plan's sketch has the text for both
@@ -375,6 +375,79 @@ stale:
     (step 5 in the plan).
   Between step 3 and the step that removes each note, it is wrong. Removing
   them in step 3 instead is a deviation for the reviewer to decide.
+
+** Step 3: deviations
+
+- *Hashed fallback names are per path component.* The plan says a name that
+  is too long is replaced by "the SHA-256 hex digest of the key". Instead,
+  each component (product directory, entry file) that exceeds
+  =MAX_ENTRY_NAME_BYTES= is replaced by =sha256-= plus the SHA-256 digest of
+  its own readable name. The two are equally unique, and the header check
+  guards against any mix-up either way. This keeps the entry file readable
+  when only the product directory is long.
+- *The =MAX_ENTRY_NAME_BYTES= comment gives a different reason from the
+  plan's sketch.* The sketch says the margin below 255 bytes "leaves room
+  for the temporary-file prefix used by atomic writes". But the temporary
+  files come from =tempfile.NamedTemporaryFile=, whose names are a short
+  prefix plus random characters, not derived from the entry name. So that
+  reason does not hold. The comment now says the margin is a safety
+  allowance, not a derived bound. The value, 200, is unchanged.
+- *Additions not in the plan's sketch:*
+  - two named constants: =HASHED_NAME_PREFIX= (="sha256-"=) and
+    =TEMP_FILE_PREFIX= (=".tmp-"=);
+  - a helper, =_envelope_mismatch=, which returns the reason an envelope is
+    rejected. That reason goes into the warning text. An object that is not
+    a dict with a =data= entry is rejected as "not a cache entry envelope";
+  - =_read_disk= opens the file and treats =FileNotFoundError= as a miss,
+    instead of checking =exists()= first. This avoids a race in which the
+    file is deleted between the check and the open.
+- *Known limits, recorded rather than fixed:*
+  - there is no =fsync= before =os.replace=. The rename is atomic for
+    concurrent readers, which is what the =EOFError= fix needs. After a power
+    loss or an operating-system crash, though, some filesystems can leave
+    the renamed file empty. Such an entry is then rejected and recomputed on
+    its next read, so it cannot serve wrong data;
+  - temporary files left by a process killed mid-write are not cleaned up.
+    They are never read.
+- *Tests, compared with the plan's descriptions:*
+  - =test_long_product_uses_hashed_name= also checks that a short key's path
+    stays readable (=[(1, 0, 0), (1, 1, 0)]/lower_weight_CGC_((2, 1, 0), 1)=);
+  - =test_installed_commit_handles_all_install_types= replaces
+    =importlib.metadata.distribution= with a stand-in object whose
+    =read_text= returns the case's =direct_url.json= text;
+  - =test_format_version_mismatch_is_rejected= and
+    =test_corrupt_entry_is_recovered= also assert =disk_rejected=, and that
+    the rewritten entry is valid.
+- *The four =EOFError= notes were removed in step 3* (reviewer's decision,
+  2026-09-28), instead of in steps 4 and 5 as the plan schedules. They were
+  false once step 3 landed. The notes:
+  - the comment above the site-factor =Pool= in
+    =pyclebsch/matrix_elements/plaquette_matrix_elements.py=. Step 4 still
+    adds =pool_kwargs()= to that =Pool=;
+  - the =parallelize= note in the =run/su_n_wilson_loop.py= module
+    docstring;
+  - the comment on =parallelize = True= in =run/gen_ymcirc_data.py=;
+  - the "Caveat" bullet under Parallelization in
+    =.claude/skills/pyclebsch/SKILL.md=.
+  Evidence that they were false, from the case in the findings (L3
+  plaquette-0 site factors, =parallelize=True=, =fork=, empty disk cache):
+  - the step-2 code (=35d1cd1=, extracted with =git archive= into a scratch
+    directory) crashed with =EOFError: Ran out of input= in 6 of 6 runs;
+  - the step-3 code completed in 6 of 6 runs, in about 0.62 s each (Linux
+    container), with max difference 4.4e-16 against a serial run and no
+    leftover temporary files.
+  After the removal, the suite still passes (234), and both scripts still
+  import.
+- *Checks run in step 3:*
+  - red first: 12 of the 13 new tests failed for the expected reasons. For
+    example, the planted legacy entry was served, differing by 0.91 from
+    the correct values, and a failed write left a partial file.
+    =test_disk_entry_used_after_memory_clear= passed before the change, as
+    expected: the step-2 disk code already reads entries back;
+  - green: 234 passed (221 plus 13 new), with no =CGCCacheWarning= outside
+    the tests that expect one;
+  - A2 =compare=: all three workloads pass, max difference 3.3e-16;
+  - ty: the same 19 known diagnostics, none in =cache.py=.
 
 ** Step 4: references to update
 

@@ -1,6 +1,10 @@
 import copy
 import dataclasses
+import json
+import pickle
+import re
 from collections import Counter
+from importlib import metadata
 from pathlib import Path
 
 import pytest
@@ -325,3 +329,242 @@ def test_memory_limit_rejects_invalid_values(memory_limit_restored):
         with pytest.raises(ValueError):
             cgc_cache.set_memory_cache_limit(invalid)
     assert cgc_cache._cache.max_memory_entries == 5
+
+
+# --- Disk tier ---
+
+# The 8 in 3x3bar: one highest-weight and one lower-weight entry on disk.
+OCTET_PRODUCT = [(1, 0, 0), (1, 1, 0)]
+OCTET = (2, 1, 0)
+
+
+def _entry_files(cache: Path) -> list[Path]:
+    """Every file below the cache root."""
+    return sorted(f for f in cache.rglob("*") if f.is_file())
+
+
+def _octet_lower_path() -> Path:
+    """Where the lower-weight table of copy 1 of the octet is stored."""
+    key = cgc_cache.CacheKey.lower(OCTET_PRODUCT, OCTET, 1, cgc.EPS)
+    return cgc_cache._cache._entry_path(key)
+
+
+def _fresh_octet() -> dict:
+    """The octet's CGCs computed with no cache at all."""
+    original = cgc.get_cache_dir()
+    cgc.set_cache_dir(None)
+    try:
+        return cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
+    finally:
+        cgc.set_cache_dir(original)
+
+
+def _load_envelope(path: Path) -> dict:
+    with open(path, "rb") as fp:
+        return pickle.load(fp)
+
+
+def _dump_envelope(path: Path, envelope: dict) -> None:
+    with open(path, "wb") as fp:
+        pickle.dump(envelope, fp)
+
+
+def test_disk_entries_written_under_version_namespace(tmp_path):
+    """Every entry lives under v<CGC_CACHE_VERSION>/."""
+    cache = tmp_path / "CGC_Data"
+    cgc.set_cache_dir(cache)
+    cgc.calc_cgcs([(2, 1, 0), (2, 1, 0)])
+    files = _entry_files(cache)
+    assert files
+    assert all(f.relative_to(cache).parts[0] == f"v{cgc_cache.CGC_CACHE_VERSION}" for f in files)
+
+
+def test_disk_entry_used_after_memory_clear(tmp_path):
+    """With the memory tier cleared, entries are read back from disk rather
+    than recomputed."""
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    first = cgc.calc_cgcs([(2, 1, 0), (2, 1, 0)])
+    cgc.clear_memory_cache()
+    before = cgc.cache_stats()
+    second = cgc.calc_cgcs([(2, 1, 0), (2, 1, 0)])
+    delta = _stats_since(before)
+    assert delta["disk_hits"] > 0
+    assert delta["computed"] == 0
+    assert _max_abs_difference(first, second) == 0
+
+
+def test_legacy_layout_entries_are_ignored(tmp_path):
+    """An entry at the unversioned layout of pyclebsch <= 0.1 is never read,
+    even when it sits in the configured directory."""
+    fresh = _fresh_octet()
+    cache = tmp_path / "CGC_Data"
+    legacy = cache / "[(1, 0, 0), (1, 1, 0)]" / "lower_weight_CGC_((2, 1, 0), 1)"
+    legacy.parent.mkdir(parents=True)
+    altered = {state: {ps: 0.5 for ps in coefficients} for state, coefficients in fresh.items()}
+    _dump_envelope(legacy, altered)
+    cgc.set_cache_dir(cache)
+    assert _max_abs_difference(cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1), fresh) <= RECOMPUTE_TOL
+
+
+def test_previous_version_entries_are_ignored(tmp_path, monkeypatch):
+    """After a CGC_CACHE_VERSION bump, entries written under the old version
+    are not read, and new ones are written under the new version."""
+    cache = tmp_path / "CGC_Data"
+    cgc.set_cache_dir(cache)
+    cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
+    new_version = cgc_cache.CGC_CACHE_VERSION + 1
+    monkeypatch.setattr(cgc_cache, "CGC_CACHE_VERSION", new_version)
+    cgc.clear_memory_cache()
+    before = cgc.cache_stats()
+    cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
+    delta = _stats_since(before)
+    assert delta["disk_hits"] == 0
+    assert delta["computed"] > 0
+    assert any(f.relative_to(cache).parts[0] == f"v{new_version}" for f in _entry_files(cache))
+
+
+def test_format_version_mismatch_is_rejected(tmp_path):
+    """An entry whose envelope format differs is rejected with a warning,
+    recomputed, and rewritten."""
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
+    path = _octet_lower_path()
+    envelope = _load_envelope(path)
+    envelope["format_version"] = cgc_cache.CACHE_FORMAT_VERSION + 1
+    _dump_envelope(path, envelope)
+    cgc.clear_memory_cache()
+    before = cgc.cache_stats()
+    with pytest.warns(cgc_cache.CGCCacheWarning):
+        cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
+    delta = _stats_since(before)
+    assert delta["disk_rejected"] == 1
+    assert delta["computed"] == 1
+    assert _load_envelope(path)["format_version"] == cgc_cache.CACHE_FORMAT_VERSION
+
+
+def test_entry_with_mismatched_key_is_rejected(tmp_path):
+    """A valid entry copied onto another key's path is rejected with a
+    warning, and the right table is computed and written there."""
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    fresh = cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
+    singlet_key = cgc_cache.CacheKey.lower(OCTET_PRODUCT, (0, 0, 0), 1, cgc.EPS)
+    cgc.calc_cgcs(OCTET_PRODUCT, (0, 0, 0), 1)
+    octet_path = _octet_lower_path()
+    octet_path.write_bytes(cgc_cache._cache._entry_path(singlet_key).read_bytes())
+    cgc.clear_memory_cache()
+    with pytest.warns(cgc_cache.CGCCacheWarning):
+        result = cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
+    assert _max_abs_difference(result, fresh) <= RECOMPUTE_TOL
+    octet_key = cgc_cache.CacheKey.lower(OCTET_PRODUCT, OCTET, 1, cgc.EPS)
+    assert _load_envelope(octet_path)["key"] == octet_key.as_header()
+
+
+def test_eps_change_invalidates(tmp_path, monkeypatch):
+    """Changing cgc.EPS changes the key, so neither the memory entry nor the
+    disk entry written under the old value is served."""
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
+    path = _octet_lower_path()
+    new_eps = cgc.EPS / 10
+    monkeypatch.setattr(cgc, "EPS", new_eps)
+    before = cgc.cache_stats()
+    with pytest.warns(cgc_cache.CGCCacheWarning):
+        cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
+    delta = _stats_since(before)
+    assert delta["memory_hits"] == 0
+    assert delta["disk_hits"] == 0
+    assert delta["computed"] > 0
+    assert _load_envelope(path)["key"]["eps"] == new_eps
+
+
+@pytest.mark.parametrize("damage", ["empty", "truncated"])
+def test_corrupt_entry_is_recovered(tmp_path, damage):
+    """An empty or truncated entry is rejected with a warning, the correct
+    values are returned, and a valid entry replaces it."""
+    fresh = _fresh_octet()
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
+    path = _octet_lower_path()
+    contents = path.read_bytes()
+    path.write_bytes(b"" if damage == "empty" else contents[: len(contents) // 2])
+    cgc.clear_memory_cache()
+    with pytest.warns(cgc_cache.CGCCacheWarning):
+        result = cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
+    assert _max_abs_difference(result, fresh) <= RECOMPUTE_TOL
+    envelope = _load_envelope(path)
+    assert envelope["key"] == cgc_cache.CacheKey.lower(OCTET_PRODUCT, OCTET, 1, cgc.EPS).as_header()
+
+
+def test_failed_write_leaves_no_partial_file(tmp_path, monkeypatch):
+    """If writing an entry fails part way, neither the entry nor a temporary
+    file is left behind."""
+    cache = tmp_path / "CGC_Data"
+    cgc.set_cache_dir(cache)
+
+    def failing_dump(obj, fp, *args, **kwargs):
+        fp.write(b"partial")
+        raise RuntimeError("simulated failure while writing")
+
+    monkeypatch.setattr(cgc_cache.pickle, "dump", failing_dump)
+    with pytest.raises(RuntimeError):
+        cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
+    assert _entry_files(cache) == []
+
+
+def test_disk_entry_header_records_provenance(tmp_path):
+    """Every entry records the pyclebsch version and commit; in this editable
+    install the commit is unknown."""
+    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
+    envelope = _load_envelope(_octet_lower_path())
+    assert envelope["pyclebsch_version"] is None or isinstance(envelope["pyclebsch_version"], str)
+    commit = envelope["pyclebsch_commit"]
+    assert commit is None or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit)
+    assert commit is None
+
+
+class _FakeDistribution:
+    """Stands in for importlib.metadata.Distribution: only read_text is used."""
+
+    def __init__(self, direct_url: str | None) -> None:
+        self._direct_url = direct_url
+
+    def read_text(self, filename: str) -> str | None:
+        return self._direct_url if filename == "direct_url.json" else None
+
+
+def test_installed_commit_handles_all_install_types(monkeypatch):
+    """The commit is read from direct_url.json for git installs, and is None
+    for every other install type and for any unreadable metadata."""
+    git_hash = "cb35b4e" + "0" * 33
+    cases = {
+        "git install": (json.dumps({"url": "https://example.invalid/pyclebsch.git",
+                                    "vcs_info": {"vcs": "git", "commit_id": git_hash}}), git_hash),
+        "editable install": (json.dumps({"url": "file:///src/pyclebsch",
+                                         "dir_info": {"editable": True}}), None),
+        "index install": (None, None),
+        "malformed JSON": ("{not json", None),
+    }
+    for label, (direct_url, expected) in cases.items():
+        monkeypatch.setattr(metadata, "distribution", lambda name, d=direct_url: _FakeDistribution(d))
+        cgc_cache._installed_commit.cache_clear()
+        assert cgc_cache._installed_commit() == expected, label
+
+    def not_installed(name):
+        raise metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(metadata, "distribution", not_installed)
+    cgc_cache._installed_commit.cache_clear()
+    assert cgc_cache._installed_commit() is None
+    cgc_cache._installed_commit.cache_clear()
+
+
+def test_long_product_uses_hashed_name():
+    """A name that would exceed MAX_ENTRY_NAME_BYTES is replaced by a hash,
+    and short names stay readable."""
+    long_key = cgc_cache.CacheKey.lower([(1, 0, 0)] * 30, (30, 0, 0), 1, EPS)
+    long_path = long_key.relative_path()
+    assert all(len(part.encode()) <= cgc_cache.MAX_ENTRY_NAME_BYTES for part in long_path.parts)
+    assert long_path.parts[0] != str(list(long_key.product))
+    short_key = cgc_cache.CacheKey.lower(OCTET_PRODUCT, OCTET, 1, EPS)
+    assert short_key.relative_path() == Path("[(1, 0, 0), (1, 1, 0)]") / "lower_weight_CGC_((2, 1, 0), 1)"

@@ -122,7 +122,7 @@ Progressive filtering — provide more parameters for more specific results:
 
 **Normalization**: i-weights normalized so last component = 0.
 
-**Caching** (`pyclebsch/cache.py`): every table is computed at most once per process and kept in an in-memory cache (`clear_memory_cache()`, `cache_stats()`, optional `set_memory_cache_limit(n)`). Behind it is a disk cache: pickle files in `<cache dir>/[str(sorted_product_irreps)]/` with filenames `highest_weight_CGC_(sum_iweight)` and `lower_weight_CGC_((sum_iweight, mult_idx))`. The cache dir defaults to `./CGC_Data` in the working directory; `set_cache_dir(path)` changes it, `set_cache_dir(None)` disables the disk cache, and both clear the in-memory cache.
+**Caching** (`pyclebsch/cache.py`): every table is computed at most once per process and kept in an in-memory cache (`clear_memory_cache()`, `cache_stats()`, optional `set_memory_cache_limit(n)`). Behind it is a disk cache: one pickle file per table in `<cache dir>/v<CGC_CACHE_VERSION>/[str(sorted_product_irreps)]/`, with filenames `highest_weight_CGC_(sum_iweight)` and `lower_weight_CGC_((sum_iweight, mult_idx))`; a directory or file name longer than 200 bytes is replaced by `sha256-<digest>`. Each file holds an envelope (format and convention versions, the key including `EPS`, pyclebsch version and commit, and the table). An entry whose envelope does not match, or that cannot be read, is deleted with a `CGCCacheWarning` and recomputed. Writes are atomic (temporary file, then `os.replace`). Entries outside `v<CGC_CACHE_VERSION>/`, including every entry written by pyclebsch ≤ 0.1, are never read. The cache dir defaults to `./CGC_Data` in the working directory; `set_cache_dir(path)` changes it, `set_cache_dir(None)` disables the disk cache, and both clear the in-memory cache.
 
 **Only nonzero CGCs stored** (threshold `EPS = 1e-10`).
 
@@ -397,7 +397,6 @@ Multiplies all four site factors with dimension coefficient `sqrt(d1 * d3)`. Rou
 
 - `calc_plaquette_site_factors`: 5-worker `multiprocessing.Pool` for site factor computation
 - `calc_plaquette_elements`: 5-worker pool for glueing (each s1 seed is independent)
-- **Caveat**: First run may hit `EOFError` if CGCs not yet cached (parallel pickle reads). Rerun to fix.
 
 ---
 
