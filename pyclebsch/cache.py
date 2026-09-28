@@ -221,8 +221,8 @@ class CGCCache:
     def set_disk_dir(self, path: str | os.PathLike[str] | None) -> None:
         """Store _resolve_disk_dir(path), or None to turn the disk tier off, and
         clear memory, so that no table read from or destined for the old
-        directory is served. ValueError for an empty path, with nothing
-        changed."""
+        directory is served. ValueError for the empty string, with nothing
+        changed (see _resolve_disk_dir for Path(""))."""
         self._disk_dir = _resolve_disk_dir(path) if path is not None else None
         self.clear_memory()
 
@@ -350,10 +350,12 @@ def _envelope_mismatch(envelope: object, key: CacheKey) -> str | None:
 
 
 def _resolve_disk_dir(path: str | os.PathLike[str]) -> Path:
-    """Path(path).expanduser().resolve(); ValueError for an empty path.
+    """Path(path).expanduser().resolve(); ValueError for the empty string.
 
-    An empty path would resolve to the working directory, a location the
-    user did not name. expanduser comes first because Path does not expand
+    The empty string would resolve to the working directory, a location the
+    user did not name. Path("") cannot be caught here: pathlib turns it into
+    Path("."), indistinguishable from an explicit request for the working
+    directory. expanduser comes first because Path does not expand
     "~" on its own: without it, "~/cgc" would resolve to
     <working directory>/~/cgc.
     """
@@ -409,9 +411,11 @@ _cache: CGCCache = CGCCache(disk_dir=_disk_dir_from_env())
 def set_cache_dir(path: str | os.PathLike[str] | None) -> None:
     """Enable the disk tier at path (a leading "~" expanded, then resolved to
     an absolute path), or disable it with None. There is no default location:
-    path must be given, and an empty path raises ValueError. Clears the
-    in-memory cache and updates PYCLEBSCH_CACHE_DIR so worker processes
-    started afterwards use the same setting."""
+    path must be given, and the empty string raises ValueError. Note that
+    pathlib.Path("") is the same object as Path("."), so it is accepted and
+    means the current working directory. Clears the in-memory cache and
+    updates PYCLEBSCH_CACHE_DIR so worker processes started afterwards use
+    the same setting."""
     _cache.set_disk_dir(path)
     if _cache.disk_dir is None:
         os.environ.pop(ENV_VAR, None)

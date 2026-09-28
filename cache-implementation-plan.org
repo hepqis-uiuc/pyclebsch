@@ -509,9 +509,12 @@ removes the default location, resolves paths when they are set, and adds
   site-factor =Pool=, because it could not check =object= against =Pool='s
   typed parameters. The =TypedDict= gives =initializer= and =initargs= their
   types. Behavior is unchanged.
-- *Empty-path rule:* =_resolve_disk_dir= rejects a path whose =os.fspath= is
-  the empty string. =Path("")= is spelled ="."=, so =set_cache_dir(Path(""))=
-  is accepted, as the explicitly named current directory.
+- *Empty-path rule:* =set_cache_dir("")= is rejected. =Path("")= cannot be
+  told apart from =Path(".")=, because pathlib turns an empty string into
+  =.=, so it is accepted and means the working directory. Rejecting it would
+  also reject an explicit ="."=, which the reviewer kept as valid
+  (2026-09-28). The =set_cache_dir= and =_resolve_disk_dir= docstrings say
+  so.
 - *Tests, compared with the plan's descriptions:*
   - the tests spell out the variable name =PYCLEBSCH_CACHE_DIR= rather than
     reading =pyclebsch.cache.ENV_VAR=. The name is public, documented
