@@ -6,12 +6,25 @@
 /Last updated 2026-09-28. Update this section whenever a step is completed or a
 decision is made./
 
-- *Stage:* the plan is being finalized. *No part of it has been
-  implemented.* No code, tests or docs in the library have changed.
-- *Branch:* =feature/cache_improvements=. So far it holds only the planning
-  documents; its library code is identical to =develop= at =cb35b4e=. Line
-  numbers quoted in this plan refer to that revision; recheck them before
-  editing, in case =develop= has moved.
+- *Stage:* the plan was approved on 2026-09-28 and is frozen; see
+  [[*Workflow rules for implementation sessions][Workflow rules for implementation sessions]] before doing anything. Step 0 is
+  done. Steps 1–5 have not been started.
+- *Branch:* =feature/cache_improvements=, at =3c82dc4=, which holds only
+  planning documents; its library code is identical to =develop= at
+  =cb35b4e=. Line numbers quoted in this plan refer to that revision; recheck
+  them before editing, in case =develop= has moved.
+- *Uncommitted work in the working tree:* step 0's two new files,
+  =pyclebsch/cache.py= and =tests/test_cgc_golden.py=. The reviewer commits.
+- *Baseline for A2:* =out/cache-redesign-baseline/=, which is gitignored (by
+  =out/*=) and so exists only in this checkout. It holds the step-0 reference
+  outputs (one pickle per workload), =provenance.json= (commit, Python
+  version, platform, entry counts, wall times) and =baseline.py=. From the
+  repository root:
+  - =uv run python out/cache-redesign-baseline/baseline.py compare= recomputes
+    the three workloads on a fresh, empty disk cache, serially, and exits
+    non-zero if any key set differs or any value differs by more than 1e-10;
+  - =... baseline.py record= overwrites the reference outputs. Do not run it
+    again.
 - *Open decisions that block implementation:* none (see
   [[*Decisions for the reviewer][Decisions for the reviewer]]).
 - *Related documents* (all in the repository root):
@@ -21,19 +34,74 @@ decision is made./
   - =disk-cache-backend-replacement-issue.org=: follow-up work (strategy S3,
     replacing pickle). It builds on this plan and starts after step 5.
 
-| Step | Content                            | Status      | Commit | Notes |
-|------+------------------------------------+-------------+--------+-------|
-|    0 | Baseline and golden-value test     | not started |        |       |
-|    1 | Input type standardization         | not started |        |       |
-|    2 | Memory tier                        | not started |        |       |
-|    3 | Disk-tier hardening                | not started |        |       |
-|    4 | Defaults and propagation           | not started |        |       |
-|    5 | Docs, scripts and version          | not started |        |       |
+| Step | Content                            | Status      | Commit      | Notes                                          |
+|------+------------------------------------+-------------+-------------+------------------------------------------------|
+|    0 | Baseline and golden-value test     | done        | uncommitted | Deviation: see [[*Step 0: deviations][Step 0: deviations]] |
+|    1 | Input type standardization         | not started |             |                                                |
+|    2 | Memory tier                        | not started |             |                                                |
+|    3 | Disk-tier hardening                | not started |             |                                                |
+|    4 | Defaults and propagation           | not started |             |                                                |
+|    5 | Docs, scripts and version          | not started |             |                                                |
 
-When a step is completed:
-- set its status to =done= and record the commit hash;
-- note any deviation from the plan in the Notes column;
-- update the plan body so that it describes what was actually built.
+** Workflow rules for implementation sessions
+
+Everything below the Work status section is the approved plan. A session
+that implements it follows these rules:
+1. *Implement only the step the reviewer asks for.* Do not start the next
+   step without being asked.
+2. *Do not commit.* Do not run =git commit=, =git reset=, =git stash=,
+   =git push=, or create branches or tags. The reviewer makes every commit.
+   "Each step is one commit" in the Order of work describes how the reviewer
+   commits the work, not something the implementing session does.
+3. *Do not edit the approved plan.* Change nothing outside this Work status
+   section: not the design, the code sketches, the test list, the order of
+   work, the acceptance criteria or the decisions. That holds even where the
+   work deviates from them. The plan body records what was approved, and
+   deviations are recorded here.
+4. *When the step's work is done:*
+   1. run the full test suite (=uv run -m pytest -q=) and the A2 check
+      (=uv run python out/cache-redesign-baseline/baseline.py compare=);
+   2. report to the reviewer what was done: files changed, test results, the
+      A2 result, and any deviation from the plan;
+   3. then update this Work status section, and only this section:
+      - the step's row in the table (status, and a Notes entry that
+        summarizes any deviation or points to its subsection);
+      - the Stage, Branch and Uncommitted-work bullets;
+      - for a significant deviation, a subsection =** Step N: deviations=
+        below. It says what the plan specified, what was done instead, and
+        why.
+5. *If a step cannot be done as planned* and the difference is one the
+   reviewer should decide, stop and ask before deviating.
+
+** Step 0: deviations
+
+- *=pyclebsch/cache.py= was created in step 0, holding only
+  =CGC_CACHE_VERSION=.* The plan creates =cache.py= in step 2, but the
+  golden-value test added in step 0 is keyed by =CGC_CACHE_VERSION=, which
+  the plan puts in that module. Step 0 therefore creates the module with
+  just that constant and its comment. The comment omits the plan's
+  sentences about the =v<CGC_CACHE_VERSION>/= directory layout, since that
+  layout arrives in step 3. Nothing else imports the module, so behavior is
+  unchanged. Consequences for later steps:
+  - step 2 extends this file rather than creating it;
+  - step 3 adds the layout sentences to the constant's comment.
+- *The golden-value test turns the disk cache off while it runs* (an autouse
+  fixture calls =set_cache_dir(None)= and restores the previous setting). The
+  plan does not specify this. Without it, the test could pass by reading
+  tables that an earlier revision left in the working directory's
+  =./CGC_Data=, and it would no longer pin the code's conventions. The fixture
+  relies only on =set_cache_dir(None)= and =get_cache_dir()=, which keep
+  their meaning through step 4.
+- *Checks run in step 0* (not a deviation, recorded for reference):
+  - suite: 206 passed (197 existing, 9 new);
+  - A2 =compare=: all three workloads pass, max difference 4.4e-16, with
+    entry counts 3,340 (L1), 68 (L2) and 4,018 (L3). These match the
+    findings report;
+  - negative controls: shifting one recorded L2 value by 1e-9 makes
+    =compare= fail. For the golden test, swapping the 3 ⊗ 3 ⊗ 3 octet
+    copies, flipping the phase of 8 ⊗ 8 → 8 copy 2, and swapping the two
+    singlet copies of 3 ⊗ 3 ⊗ 3̄ ⊗ 3̄ each make it fail, by 1.12, 1.1 and
+    0.49 respectively.
 
 * Purpose and scope
 
@@ -119,8 +187,14 @@ Two separate steps turn a caller's i-weight into key material:
 - *Opting in* works two ways:
   - =set_cache_dir(path)=;
   - setting the environment variable =PYCLEBSCH_CACHE_DIR= before import.
-- A path is resolved to an absolute path when it is set, so a later =chdir=
-  cannot move the cache.
+- A path is made absolute when it is set, so a later =chdir= cannot move
+  the cache. A leading =~= is expanded first (=Path.expanduser=), then the
+  path is resolved (=Path.resolve=). The first step is needed because =Path=
+  does not expand =~= on its own. Without it, =set_cache_dir("~/cgc")=, or a
+  quoted =export PYCLEBSCH_CACHE_DIR="~/cgc"= (which the shell leaves
+  unexpanded), would point at a directory literally named =~= inside the
+  working directory. Both =set_cache_dir= and the environment-variable path
+  go through the same helper, =_resolve_disk_dir=.
 - =set_cache_dir(...)= always clears the memory tier.
 - =set_cache_dir(...)= also writes =PYCLEBSCH_CACHE_DIR= (or removes it for
   =None=). Worker processes started by =spawn= then see the same setting,
@@ -200,7 +274,7 @@ Two separate steps turn a caller's i-weight into key material:
    =PYCLEBSCH_CACHE_DIR=. There is no default location: the disk cache is only
    used at a path you name, and =set_cache_dir("")= raises =ValueError=.
 2. =get_cache_dir()= returns =None= by default. A path that is set is returned
-   as an absolute path.
+   as an absolute path, with a leading =~= expanded to the home directory.
 3. Existing =CGC_Data= folders are never read. They can be deleted.
 4. =set_cache_dir()= clears the in-memory cache and updates =PYCLEBSCH_CACHE_DIR=.
 5. =calc_highest_weight_cgcs= and =calc_lower_weight_cgcs= are removed from
@@ -407,8 +481,8 @@ class CGCCache:
         return self._disk_dir
 
     def set_disk_dir(self, path: str | os.PathLike[str] | None) -> None:
-        """Resolve and store path (None turns the disk tier off); clear memory.
-        ValueError for an empty path."""
+        """Store _resolve_disk_dir(path), or None to turn the disk tier off;
+        clear memory. ValueError for an empty path."""
         ...
 
     def clear_memory(self) -> None:
@@ -459,8 +533,17 @@ class CGCCache:
         ...
 
 
+def _resolve_disk_dir(path: str | os.PathLike[str]) -> Path:
+    """Path(path).expanduser().resolve(); ValueError for an empty path.
+
+    expanduser comes first because Path does not expand "~" on its own:
+    without it, "~/cgc" would resolve to <working directory>/~/cgc.
+    """
+    ...
+
+
 def _disk_dir_from_env() -> Path | None:
-    """Resolved Path from PYCLEBSCH_CACHE_DIR, or None if unset or empty."""
+    """_resolve_disk_dir(PYCLEBSCH_CACHE_DIR), or None if unset or empty."""
     ...
 
 
@@ -491,8 +574,8 @@ _cache: CGCCache = CGCCache(disk_dir=_disk_dir_from_env())
 
 
 def set_cache_dir(path: str | os.PathLike[str] | None) -> None:
-    """Enable the disk tier at path (resolved to an absolute path), or disable
-    it with None. There is no default location: path must be given, and an
+    """Enable the disk tier at path (a leading "~" expanded, then resolved to
+    an absolute path), or disable it with None. There is no default location: path must be given, and an
     empty path raises ValueError. Clears the in-memory cache and updates
     PYCLEBSCH_CACHE_DIR so worker processes started afterwards use the same
     setting."""
@@ -691,6 +774,12 @@ supersedes, if any.
   =ValueError= and leaves the settings unchanged. Red today.
 - =test_set_cache_dir_resolves_relative_path=: after =chdir(tmp)= and
   =set_cache_dir("rel")=, the result is =tmp/rel= resolved. Red today.
+- =test_cache_dir_expands_home=: with =HOME= (and =USERPROFILE=, which
+  =expanduser= reads on Windows) monkeypatched to =tmp=,
+  =set_cache_dir("~/cgc")= gives =tmp/cgc= resolved. A subprocess with the same
+  home and =PYCLEBSCH_CACHE_DIR=~/cgc= (passed unexpanded, as a quoted shell
+  assignment would pass it) gives the same path, and neither creates a =~=
+  directory in the working directory. Red today.
 - =test_set_cache_dir_updates_env_var= and =…_none_removes_env_var=. Red today.
 - =test_nothing_written_by_default=: =chdir(tmp_path)=, run =calc_cgcs=,
   and =tmp_path= stays empty. Replaces the vacuous
