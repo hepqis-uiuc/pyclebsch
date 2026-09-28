@@ -1,8 +1,11 @@
 import copy
 import dataclasses
 import json
+import os
 import pickle
 import re
+import subprocess
+import sys
 from collections import Counter
 from importlib import metadata
 from pathlib import Path
@@ -22,18 +25,129 @@ def restore_cache_dir():
     cgc.set_cache_dir(original)
 
 
-# --- API surface tests ---
+# --- Defaults and configuration ---
 
-def test_get_cache_dir_default():
-    """Default cache dir is Path('./CGC_Data')."""
-    assert cgc.get_cache_dir() == Path("./CGC_Data")
+# The documented name of the environment variable, spelled out rather than
+# read from pyclebsch, so that renaming it fails these tests.
+CACHE_DIR_ENV_VAR = "PYCLEBSCH_CACHE_DIR"
+
+
+def _run_python(code: str, cwd: Path, env_updates: dict[str, str | None]) -> str:
+    """Run code in a fresh interpreter (this test environment's Python) and
+    return its stdout. env_updates sets variables, or removes those mapped to
+    None, starting from this process's environment."""
+    env = dict(os.environ)
+    for name, value in env_updates.items():
+        if value is None:
+            env.pop(name, None)
+        else:
+            env[name] = value
+    completed = subprocess.run([sys.executable, "-c", code], cwd=cwd, env=env,
+                               capture_output=True, text=True, check=True)
+    return completed.stdout.strip()
+
+
+PRINT_CACHE_DIR = "from pyclebsch.cache import get_cache_dir; print(get_cache_dir())"
+COMPUTE_AND_PRINT_CACHE_DIR = (
+    "import pyclebsch.cgc as cgc; cgc.calc_cgcs([(1, 0, 0), (1, 1, 0)]); "
+    "print(cgc.get_cache_dir())"
+)
+
+
+def test_default_disk_cache_is_disabled(tmp_path):
+    """With PYCLEBSCH_CACHE_DIR unset, a fresh process has no disk tier.
+    Replaces test_get_cache_dir_default."""
+    out = _run_python(PRINT_CACHE_DIR, tmp_path, {CACHE_DIR_ENV_VAR: None})
+    assert out == "None"
+
+
+def test_env_var_enables_disk_cache(tmp_path):
+    """PYCLEBSCH_CACHE_DIR turns the disk tier on at that path, resolved."""
+    disk = tmp_path / "disk"
+    out = _run_python(PRINT_CACHE_DIR, tmp_path, {CACHE_DIR_ENV_VAR: str(disk)})
+    assert out == str(disk.resolve())
+
+
+def test_empty_env_var_disables_disk_cache(tmp_path):
+    """An empty PYCLEBSCH_CACHE_DIR means the disk tier is off, not that it
+    points at the working directory."""
+    out = _run_python(COMPUTE_AND_PRINT_CACHE_DIR, tmp_path, {CACHE_DIR_ENV_VAR: ""})
+    assert out == "None"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_set_cache_dir_requires_explicit_path(tmp_path, monkeypatch):
+    """There is no default location: set_cache_dir needs an argument, and an
+    empty path is rejected without changing any setting."""
+    monkeypatch.delenv(CACHE_DIR_ENV_VAR, raising=False)
+    with pytest.raises(TypeError):
+        cgc.set_cache_dir()
+    cgc.set_cache_dir(tmp_path / "disk")
+    configured = cgc.get_cache_dir()
+    with pytest.raises(ValueError):
+        cgc.set_cache_dir("")
+    assert cgc.get_cache_dir() == configured
+    assert os.environ[CACHE_DIR_ENV_VAR] == str(configured)
+
+
+def test_set_cache_dir_resolves_relative_path(tmp_path, monkeypatch):
+    """A relative path is resolved when it is set, so a later chdir does not
+    move the cache."""
+    (tmp_path / "elsewhere").mkdir()
+    monkeypatch.chdir(tmp_path)
+    cgc.set_cache_dir("rel")
+    assert cgc.get_cache_dir() == (tmp_path / "rel").resolve()
+    monkeypatch.chdir(tmp_path / "elsewhere")
+    assert cgc.get_cache_dir() == (tmp_path / "rel").resolve()
+
+
+def test_cache_dir_expands_home(tmp_path, monkeypatch):
+    """A leading ~ is expanded, both in set_cache_dir and in an unexpanded
+    PYCLEBSCH_CACHE_DIR, and no directory named ~ is created."""
+    home, work = tmp_path / "home", tmp_path / "cwd"
+    home.mkdir()
+    work.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.chdir(work)
+    cgc.set_cache_dir("~/cgc")
+    assert cgc.get_cache_dir() == (home / "cgc").resolve()
+    out = _run_python(COMPUTE_AND_PRINT_CACHE_DIR, work,
+                      {CACHE_DIR_ENV_VAR: "~/cgc", "HOME": str(home), "USERPROFILE": str(home)})
+    assert out == str((home / "cgc").resolve())
+    assert any((home / "cgc").rglob("*"))
+    assert not (work / "~").exists()
+
+
+def test_set_cache_dir_updates_env_var(tmp_path, monkeypatch):
+    """set_cache_dir(path) records the resolved path in PYCLEBSCH_CACHE_DIR,
+    so worker processes started afterwards use it."""
+    monkeypatch.delenv(CACHE_DIR_ENV_VAR, raising=False)
+    cgc.set_cache_dir(tmp_path / "disk")
+    assert os.environ[CACHE_DIR_ENV_VAR] == str((tmp_path / "disk").resolve())
+
+
+def test_set_cache_dir_none_removes_env_var(tmp_path, monkeypatch):
+    """set_cache_dir(None) removes PYCLEBSCH_CACHE_DIR."""
+    monkeypatch.delenv(CACHE_DIR_ENV_VAR, raising=False)
+    cgc.set_cache_dir(tmp_path / "disk")
+    cgc.set_cache_dir(None)
+    assert CACHE_DIR_ENV_VAR not in os.environ
+
+
+def test_nothing_written_by_default(tmp_path):
+    """A fresh process with default settings writes nothing to its working
+    directory. Replaces test_cgcs_not_written_when_cache_none."""
+    out = _run_python(COMPUTE_AND_PRINT_CACHE_DIR, tmp_path, {CACHE_DIR_ENV_VAR: None})
+    assert out == "None"
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_set_cache_dir_custom(tmp_path):
     """set_cache_dir() changes what get_cache_dir() returns."""
     custom = tmp_path / "my_cache"
     cgc.set_cache_dir(custom)
-    assert cgc.get_cache_dir() == custom
+    assert cgc.get_cache_dir() == custom.resolve()
 
 
 def test_set_cache_dir_none():
@@ -46,7 +160,7 @@ def test_set_cache_dir_accepts_string(tmp_path):
     """set_cache_dir() accepts a str and converts it to a Path."""
     cgc.set_cache_dir(str(tmp_path / "str_cache"))
     assert isinstance(cgc.get_cache_dir(), Path)
-    assert cgc.get_cache_dir() == tmp_path / "str_cache"
+    assert cgc.get_cache_dir() == (tmp_path / "str_cache").resolve()
 
 
 # --- Cache behavior tests ---
@@ -58,13 +172,6 @@ def test_cgcs_written_to_configured_dir(tmp_path):
     cache_contents = list((tmp_path / "CGC_Data").rglob("*"))
     assert len(cache_contents) > 0
     assert any("highest_weight_CGC" in str(p) for p in cache_contents)
-
-
-def test_cgcs_not_written_when_cache_none(tmp_path):
-    """When cache is None, calc_cgcs still returns correct results but writes nothing."""
-    cgc.set_cache_dir(None)
-    cgc.calc_cgcs([(2, 1, 0), (2, 1, 0)])
-    assert not (tmp_path / "CGC_Data").exists()
 
 
 def test_cgcs_read_from_cache(tmp_path):

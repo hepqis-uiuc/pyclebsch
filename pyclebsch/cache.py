@@ -1,10 +1,13 @@
 """Two-tier cache for Clebsch-Gordan coefficient tables.
 
-Lookups go memory -> disk (unless the disk tier is turned off with
-set_cache_dir(None)) -> compute. The memory tier is always on and lives for
-the process; set_cache_dir() clears it. The disk tier stores one pickle file
-per table. It is on by default, at ./CGC_Data relative to the working
-directory at the time of each read or write.
+Lookups go memory -> disk (only if a directory is configured) -> compute.
+The memory tier is always on and lives for the process; set_cache_dir()
+clears it. The disk tier is opt-in, via set_cache_dir() or the
+PYCLEBSCH_CACHE_DIR environment variable, and is only ever used at a path the
+user names: there is no default location. set_cache_dir() also writes that
+variable, so worker processes started afterwards (including under spawn and
+forkserver) use the same directory; pool_kwargs() passes the settings to a
+multiprocessing.Pool explicitly.
 
 Disk entry format
 -----------------
@@ -44,7 +47,7 @@ from dataclasses import dataclass
 from importlib import metadata
 from numbers import Integral
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypedDict
 
 # su_n_operators imports neither cgc nor cache, so there is no import cycle.
 from pyclebsch.su_n_operators import IrrepWeight, normalize_iweight, standardize_iweight_type
@@ -65,6 +68,11 @@ CGC_CACHE_VERSION: int = 1
 # Version of the on-disk envelope format (the dict around the table), which
 # is independent of the CGC conventions above.
 CACHE_FORMAT_VERSION: int = 1
+
+# Environment variable that enables the disk tier and carries the setting to
+# worker processes started with spawn or forkserver. Unset or empty means the
+# disk tier is off.
+ENV_VAR: str = "PYCLEBSCH_CACHE_DIR"
 
 # Longest readable file or directory name used before switching to a hashed
 # name. Common filesystems (ext4, APFS, NTFS) cap a name at 255 bytes; the
@@ -207,13 +215,15 @@ class CGCCache:
 
     @property
     def disk_dir(self) -> Path | None:
-        """Disk-tier directory, or None if the disk tier is off."""
+        """Resolved disk-tier directory, or None if the disk tier is off."""
         return self._disk_dir
 
     def set_disk_dir(self, path: str | os.PathLike[str] | None) -> None:
-        """Store path (None turns the disk tier off) and clear memory, so that
-        no table read from or destined for the old directory is served."""
-        self._disk_dir = Path(path) if path is not None else None
+        """Store _resolve_disk_dir(path), or None to turn the disk tier off, and
+        clear memory, so that no table read from or destined for the old
+        directory is served. ValueError for an empty path, with nothing
+        changed."""
+        self._disk_dir = _resolve_disk_dir(path) if path is not None else None
         self.clear_memory()
 
     def clear_memory(self) -> None:
@@ -339,6 +349,25 @@ def _envelope_mismatch(envelope: object, key: CacheKey) -> str | None:
     return None
 
 
+def _resolve_disk_dir(path: str | os.PathLike[str]) -> Path:
+    """Path(path).expanduser().resolve(); ValueError for an empty path.
+
+    An empty path would resolve to the working directory, a location the
+    user did not name. expanduser comes first because Path does not expand
+    "~" on its own: without it, "~/cgc" would resolve to
+    <working directory>/~/cgc.
+    """
+    if os.fspath(path) == "":
+        raise ValueError("the CGC cache directory must be a non-empty path")
+    return Path(path).expanduser().resolve()
+
+
+def _disk_dir_from_env() -> Path | None:
+    """_resolve_disk_dir(PYCLEBSCH_CACHE_DIR), or None if unset or empty."""
+    value = os.environ.get(ENV_VAR, "")
+    return _resolve_disk_dir(value) if value else None
+
+
 @functools.cache
 def _installed_commit() -> str | None:
     """Git commit of the installed pyclebsch, or None when it is not known.
@@ -373,18 +402,25 @@ def _installed_version() -> str | None:
         return None
 
 
-# Process-wide cache.
-_cache: CGCCache = CGCCache(disk_dir=Path("./CGC_Data"))
+# Process-wide cache, configured from the environment at import time.
+_cache: CGCCache = CGCCache(disk_dir=_disk_dir_from_env())
 
 
 def set_cache_dir(path: str | os.PathLike[str] | None) -> None:
-    """Set the directory where computed CGCs are cached on disk, or disable
-    the disk tier with None. Clears the in-memory cache."""
+    """Enable the disk tier at path (a leading "~" expanded, then resolved to
+    an absolute path), or disable it with None. There is no default location:
+    path must be given, and an empty path raises ValueError. Clears the
+    in-memory cache and updates PYCLEBSCH_CACHE_DIR so worker processes
+    started afterwards use the same setting."""
     _cache.set_disk_dir(path)
+    if _cache.disk_dir is None:
+        os.environ.pop(ENV_VAR, None)
+    else:
+        os.environ[ENV_VAR] = str(_cache.disk_dir)
 
 
 def get_cache_dir() -> Path | None:
-    """Disk-tier directory, or None when disk caching is off."""
+    """Absolute disk-tier directory, or None when disk caching is off (the default)."""
     return _cache.disk_dir
 
 
@@ -402,3 +438,29 @@ def set_memory_cache_limit(max_entries: int | None) -> None:
     """Cap the in-memory tier at max_entries tables (least recently used are
     evicted), or remove the cap with None (the default)."""
     _cache.set_max_memory_entries(max_entries)
+
+
+def init_worker(disk_dir: Path | None, max_memory_entries: int | None) -> None:
+    """multiprocessing.Pool initializer: apply the parent's cache settings.
+
+    The directory is applied only if it differs from the worker's own
+    setting. A fork worker already has the parent's setting, and its copy of
+    the parent's memory tier; calling set_cache_dir would needlessly clear it.
+    """
+    if get_cache_dir() != disk_dir:
+        set_cache_dir(disk_dir)
+    set_memory_cache_limit(max_memory_entries)
+
+
+class PoolKwargs(TypedDict):
+    """The keyword arguments pool_kwargs() returns, typed so that
+    Pool(n, **pool_kwargs()) can be type-checked."""
+    initializer: Callable[[Path | None, int | None], None]
+    initargs: tuple[Path | None, int | None]
+
+
+def pool_kwargs() -> PoolKwargs:
+    """Keyword arguments that make a Pool's workers use this process's cache
+    settings, e.g. multiprocessing.Pool(5, **pool_kwargs())."""
+    return {"initializer": init_worker,
+            "initargs": (get_cache_dir(), _cache.max_memory_entries)}

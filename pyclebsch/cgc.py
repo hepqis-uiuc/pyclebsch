@@ -589,8 +589,8 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     sum_state is an integer indexing the basis state of sum_iweight.
     product_state is a product basis state of product_iweights.
 
-    Computed CGC tables are cached, in memory and (unless disabled) on disk;
-    see pyclebsch.cache. To reduce redundant computations,
+    Computed CGC tables are cached in memory and, if a directory is
+    configured, on disk; see pyclebsch.cache. To reduce redundant computations,
     product_iweights are sorted; computed CGCs are then returned with
     product basis states unsorted according to the input product_iweights.
 

@@ -8,16 +8,17 @@ decision is made./
 
 - *Stage:* the plan was approved on 2026-09-28 and is frozen; see
   [[*Workflow rules for implementation sessions][Workflow rules for implementation sessions]] before doing anything. Steps
-  0–3 are done. Steps 4–5 have not been started.
-- *Branch:* =feature/cache_improvements=, at =35d1cd1= (step 2). Apart
-  from steps 0–2, its library code is identical to =develop= at =cb35b4e=.
+  0–4 are done. Step 5 has not been started.
+- *Branch:* =feature/cache_improvements=, at =f2af789= (step 3). Apart
+  from steps 0–3, its library code is identical to =develop= at =cb35b4e=.
   Line numbers quoted in this plan refer to that revision; recheck them
   before editing, in case =develop= has moved.
 - *Uncommitted work in the working tree* (the reviewer commits):
-  - step 3: changes to =pyclebsch/cache.py=, =tests/test_cgc_cache.py= and
-    =.claude/skills/pyclebsch/SKILL.md=, plus the removal of the =EOFError=
-    notes from =pyclebsch/matrix_elements/plaquette_matrix_elements.py=,
-    =run/su_n_wilson_loop.py= and =run/gen_ymcirc_data.py=.
+  - step 4: changes to =pyclebsch/cache.py=, =pyclebsch/cgc.py= (docstring),
+    =pyclebsch/matrix_elements/plaquette_matrix_elements.py=,
+    =tests/test_cgc_cache.py=, =tests/test_plaquette_matrix_elements.py=,
+    =tests/test_lattice_data.py= and =.claude/skills/pyclebsch/SKILL.md=, and
+    the new files =tests/conftest.py= and =tests/test_cache_multiprocessing.py=.
 - *Baseline for A2:* =out/cache-redesign-baseline/=, which is gitignored (by
   =out/*=) and so exists only in this checkout. It holds the step-0 reference
   outputs (one pickle per workload), =provenance.json= (commit, Python
@@ -42,9 +43,9 @@ decision is made./
 |    0 | Baseline and golden-value test     | done        | =6e9e664=   | Deviation: see [[*Step 0: deviations][Step 0: deviations]] |
 |    1 | Input type standardization         | done        | =6ae563d=   | Deviation: see [[*Step 1: deviations][Step 1: deviations]] |
 |    2 | Memory tier                        | done        | =35d1cd1=   | Deviation: see [[*Step 2: deviations][Step 2: deviations]] |
-|    3 | Disk-tier hardening                | done        | uncommitted | Deviation: see [[*Step 3: deviations][Step 3: deviations]] |
-|    4 | Defaults and propagation           | not started |             | Before starting: see [[*Step 4: references to update][Step 4: references to update]] |
-|    5 | Docs, scripts and version          | not started |             |                                                |
+|    3 | Disk-tier hardening                | done        | =f2af789=   | Deviation: see [[*Step 3: deviations][Step 3: deviations]] |
+|    4 | Defaults and propagation           | done        | uncommitted | Deviation: see [[*Step 4: deviations][Step 4: deviations]] |
+|    5 | Docs, scripts and version          | not started |             | Before starting: see [[*Step 5: notes][Step 5: notes]] |
 
 ** Workflow rules for implementation sessions
 
@@ -342,7 +343,16 @@ that implements it follows these rules:
     go away once line 16 is corrected, which the plan does not cover.
   Line numbers are those after step 2, including every follow-up change
   recorded in this section. Later edits shift them, so match diagnostics by
-  message rather than by line number alone.
+  message rather than by line number alone. Steps 3 and 4 left these
+  numbers unchanged.
+
+  Other files that later steps type-check:
+  - =pyclebsch/matrix_elements/plaquette_matrix_elements.py= has 2 older
+    diagnostics (=:181=, =conjugate_iweight=; =:189=, =find_direct_sum=), both
+    caused by the same =IrrepWeight= alias;
+  - =tests/test_cgc_cache.py= has 2 deliberate ones: =set_cache_dir()= with no
+    argument, and =set_memory_cache_limit(2.5)=. They are the calls those
+    tests expect to raise.
 
 ** Step 3: references to update
 
@@ -451,6 +461,9 @@ Step 3: deviations)./
 
 ** Step 4: references to update
 
+/Status after step 4: all done, except the README and =run/demo.py= items,
+which the plan leaves to step 5 (see Step 5: notes)./
+
 References that describe the step-2 defaults, found in the same search. Line
 numbers are those after step 2. Step 4 turns the disk tier off by default,
 removes the default location, resolves paths when they are set, and adds
@@ -480,6 +493,93 @@ removes the default location, resolves paths when they are set, and adds
     / "CGC_Data")= ... to redirect writes". Once the default writes nothing,
     that call is no longer needed to protect the working directory. The
     docstring can say so, or be left as harmless advice.
+
+** Step 4: deviations
+
+- *=init_worker= applies the directory only when it differs.* The plan's
+  sketch calls =set_cache_dir(disk_dir)= unconditionally, and =set_cache_dir=
+  always clears the memory tier. Under =fork=, a worker starts with the
+  parent's settings and a copy of its filled memory tier, so an
+  unconditional call would throw that memory away for nothing. =init_worker=
+  now calls =set_cache_dir= only if =get_cache_dir() != disk_dir=.
+  =set_cache_dir= itself still always clears. Under =spawn= and
+  =forkserver=, the worker's memory is empty anyway.
+- *=pool_kwargs()= returns a =TypedDict= (=PoolKwargs=)* instead of the
+  sketch's =dict[str, object]=. ty flagged =Pool(5, **pool_kwargs())= at the
+  site-factor =Pool=, because it could not check =object= against =Pool='s
+  typed parameters. The =TypedDict= gives =initializer= and =initargs= their
+  types. Behavior is unchanged.
+- *Empty-path rule:* =_resolve_disk_dir= rejects a path whose =os.fspath= is
+  the empty string. =Path("")= is spelled ="."=, so =set_cache_dir(Path(""))=
+  is accepted, as the explicitly named current directory.
+- *Tests, compared with the plan's descriptions:*
+  - the tests spell out the variable name =PYCLEBSCH_CACHE_DIR= rather than
+    reading =pyclebsch.cache.ENV_VAR=. The name is public, documented
+    behavior, so renaming it should fail the tests;
+  - every test about process defaults runs in a fresh interpreter, because
+    the conftest pins the test session's own setting. That includes
+    =test_nothing_written_by_default=, which the plan describes as a =chdir=
+    in the test process; there it would have been vacuous;
+  - =test_set_cache_dir_custom=, =test_set_cache_dir_none= and
+    =test_set_cache_dir_accepts_string= were kept, with comparisons against
+    resolved paths. Only =test_get_cache_dir_default= and
+    =test_cgcs_not_written_when_cache_none= were replaced;
+  - =test_set_cache_dir_resolves_relative_path= also checks that a later
+    =chdir= does not move the cache;
+  - =test_cache_dir_expands_home= runs a computation in the subprocess, and
+    checks that the entries land under the home directory's =cgc/=;
+  - the multiprocessing tests use L1 plaquette 0, except
+    =test_parallel_cold_disk_run_completes=, which uses L3 plaquette 0 (the
+    case from the findings), as the plan says. They are not marked slow.
+    Together they add about 7 s to the suite, which went from 2.9 s to 9.9 s
+    (Linux container). Marking them for =--runslow= is the reviewer's call.
+- *The =forkserver= outcome, which the plan left to the test to decide.* A
+  user's own =forkserver= =Pool= created after the fork server started, and
+  without an initializer, keeps the setting from when the server started,
+  and does not see a later =set_cache_dir=. A =Pool= built with
+  =Pool(n, **pool_kwargs())= sees the new setting.
+  =test_forkserver_user_pool_sees_later_setting= asserts both. Per the plan,
+  the README (step 5) documents the limitation and its remedy. SKILL.md
+  already states it.
+- *Repository-root =CGC_Data/=* holds =v1/= entries written by the step-3 test
+  runs, while the disk tier was still on by default. No step-4 run wrote
+  there: its newest file predates =tests/conftest.py=. It is gitignored, and
+  can be deleted.
+- *Checks run in step 4:*
+  - red first:
+    - the 8 new defaults/configuration tests failed for their real
+      reasons: the default was still =CGC_Data=, the variable was ignored,
+      =""= was accepted, and paths were not resolved or expanded.
+      =test_set_cache_dir_none_removes_env_var= passed vacuously, since
+      nothing set the variable yet;
+    - in =test_cache_multiprocessing.py=, 4 of 5 failed. Spawned workers
+      wrote =./CGC_Data= in the working directory, a user's spawn =Pool=
+      saw =CGC_Data=, and =pool_kwargs= was missing.
+      =test_parallel_cold_disk_run_completes= already passed, because step
+      3 fixed that crash;
+  - green: 246 passed;
+  - A2 =compare=: all three workloads pass, max difference 4.4e-16;
+  - ty: the same 19 known diagnostics in the three tracked modules, 2 older
+    ones in =plaquette_matrix_elements.py=, and the 2 deliberate ones in
+    =tests/test_cgc_cache.py=.
+
+** Step 5: notes
+
+Items for step 5 found during earlier steps:
+- =README.md:4= (intro note) and =README.md:26–40= (the "Caching CGC data to
+  disk" section) still describe the step-3 default, disk on at
+  =./CGC_Data=. That became false in step 4. The rewrite should also cover:
+  - =PYCLEBSCH_CACHE_DIR=, including that an empty value means "off";
+  - =~= expansion, and resolution to an absolute path;
+  - the =forkserver= limitation and its remedy (see Step 4: deviations);
+  - what a disk entry records, and when =pyclebsch_commit= is =None=;
+  - that old =CGC_Data/= folders are never read.
+- The =run/demo.py= banner (lines 49–53) still says CGCs are written to
+  =./CGC_Data=, which is also false since step 4.
+- Already done in earlier steps, so not needed in step 5:
+  - =CLAUDE.md='s architecture entry for =cache.py=;
+  - the SKILL.md cache lines, algorithm headings and =EOFError= caveat;
+  - the =run/= =EOFError= notes.
 
 
 * Purpose and scope

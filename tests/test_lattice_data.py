@@ -19,9 +19,10 @@ FORDER: list[LinkDirection] = [1, 2, 3, -1, -2, -3]
 def restore_cache_dir():
     """Save/restore the CGC cache dir around each test.
 
-    Tests that compute CGCs (irreps_and_singlets / physical_plaquette_states)
-    should call cgc.set_cache_dir(tmp_path / "CGC_Data") at the top to redirect
-    writes; other tests are unaffected.
+    With default settings the disk cache is off and nothing is written. Tests
+    that compute CGCs (irreps_and_singlets / physical_plaquette_states) call
+    cgc.set_cache_dir(tmp_path / "CGC_Data") so that they also exercise the
+    disk cache, in a directory of their own.
     """
     original = cgc.get_cache_dir()
     yield
