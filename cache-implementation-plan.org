@@ -1,30 +1,65 @@
 #+title: CGC cache redesign: implementation plan
-#+date: 2026-09-24
+#+date: 2026-09-24 (revised 2026-09-28)
+
+* Work status
+
+/Last updated 2026-09-28. Update this section whenever a step is completed or a
+decision is made./
+
+- *Stage:* the plan is being finalized. *No part of it has been
+  implemented.* No code, tests or docs in the library have changed.
+- *Branch:* =feature/cache_improvements=. So far it holds only the planning
+  documents; its library code is identical to =develop= at =cb35b4e=. Line
+  numbers quoted in this plan refer to that revision; recheck them before
+  editing, in case =develop= has moved.
+- *Open decisions that block implementation* (see [[*Decisions for the reviewer][Decisions for the reviewer]]):
+  - 9, memory cap unit and default. Open; step 2 records the measurement
+    it needs.
+- *Related documents* (all in the repository root):
+  - =cache-issue-report.org=: the original task.
+  - =cache-issue-findings-report.org=: the investigation. It is the evidence
+    for every measured number in this plan, and defines F1–F6 and S1–S4.
+  - =disk-cache-backend-replacement-issue.org=: follow-up work (strategy S3,
+    replacing pickle). It builds on this plan and starts after step 5.
+
+| Step | Content                            | Status      | Commit | Notes |
+|------+------------------------------------+-------------+--------+-------|
+|    0 | Baseline and golden-value test     | not started |        |       |
+|    1 | Input type standardization         | not started |        |       |
+|    2 | Memory tier                        | not started |        |       |
+|    3 | Disk-tier hardening                | not started |        |       |
+|    4 | Defaults and propagation           | not started |        |       |
+|    5 | Docs, scripts and version          | not started |        |       |
+
+When a step is completed:
+- set its status to =done= and record the commit hash;
+- note any deviation from the plan in the Notes column;
+- update the plan body so that it describes what was actually built.
 
 * Purpose and scope
 
 This plan turns the recommendation of =cache-issue-findings-report.org=
 (strategy S4 with S2) into concrete changes:
 - An *in-memory CGC cache that is always on*.
-- A *disk cache that is off unless the user opts in*.
+- A *disk cache that is off unless the user opts in*, by naming a directory.
 - An opt-in disk tier that is hardened. It is versioned by convention and has
   self-describing entries, atomic writes, recovery from corrupt entries, and
   worker propagation.
 
 It lists every file to be touched, the proposed signatures, the tests (written
-red/green), the order of work, and the acceptance criteria. No code has been
-changed yet.
+red/green), the order of work, and the acceptance criteria. Implementation
+progress is tracked in [[*Work status][Work status]].
 
 The problems being fixed, restated so this plan stands alone:
 
 | ID | Problem                                                                                                  | Fixed by                                  |
 |----+----------------------------------------------------------------------------------------------------------+-------------------------------------------|
-| F1 | =set_cache_dir()= is process-local; =spawn=/=forkserver= workers revert to the default =./CGC_Data=       | Environment variable + =Pool= initializer |
+| F1 | =set_cache_dir()= is process-local; =spawn=/=forkserver= workers revert to the default =./CGC_Data=       | Environment variables + =Pool= initializer |
 | F2 | Disk entries record no provenance; a pyclebsch upgrade silently serves stale (or mixed) CGCs            | Disk off by default; version namespace + header check |
 | F3 | Non-atomic writes; concurrent first runs crash with =EOFError=; a corrupt file crashes every later run  | Atomic writes; self-healing reads; disk off by default |
-| F4 | Key is =str()= of caller objects (numpy ints duplicate entries, long names exceed 255 bytes, floats leave empty dirs) | Canonical int keys; validation before any I/O; hashed fallback names |
+| F4 | Key is =str()= of caller objects (numpy ints duplicate entries, long names exceed 255 bytes, floats leave empty dirs) | Keys built from plain =int=s; type validation before any I/O; hashed fallback names |
 | F5 | Docs say the cache is "relative to package root"; one test can never fail                               | Doc fixes; test replaced                  |
-| F6 | Loading a disk entry runs =pickle=                                                                       | Disk off by default (pickle kept for opt-in users) |
+| F6 | Loading a disk entry runs =pickle=                                                                       | Disk off by default (pickle kept for opt-in users; replacement is follow-up work) |
 
 Measured in a Linux container, for one plaquette of the 2×2×2 PBC T1 lattice,
 site factors took:
@@ -55,17 +90,33 @@ Unchanged from today, there are two kinds of entry:
 
 A key has these fields:
 - =kind=;
-- =product=: the i-weights, normalized, as plain =int= tuples, *in the order
-  given*. The key does not re-sort, because the computation assumes the
-  order it is handed, and =calc_cgcs= already sorts before calling in;
-- =sum_irrep=: normalized, plain =int=s;
+- =product=: the i-weights, converted to plain =int= tuples and normalized,
+  *in the order given*. The key does not re-sort, because the computation
+  assumes the order it is handed, and =calc_cgcs= already sorts before
+  calling in;
+- =sum_irrep=: plain =int=s, normalized;
 - =mult_idx=: =None= for highest entries;
 - =eps=: the value of =cgc.EPS= at call time. Coefficients below it are
   dropped, so it changes the stored content.
 
+Two separate steps turn a caller's i-weight into key material:
+- =standardize_iweight_type= (new) checks that every entry is an integer and
+  converts each one to a plain Python =int=. It does not change any value.
+- =normalize_iweight= (existing, unchanged) subtracts the last entry from
+  every entry, so the last entry becomes 0.
+
 ** Defaults and configuration
 
 - The disk tier is off by default, so =get_cache_dir()= returns =None=.
+- *The disk tier is only ever used at a path the user names.* There is no
+  default location: no implicit =./CGC_Data= and no per-user directory such
+  as =~/.cache/pyclebsch=. Concretely:
+  - =set_cache_dir= has no default argument;
+  - =set_cache_dir("")= raises =ValueError=, because =Path("")= resolves to
+    the working directory, which would be an implicit location;
+  - an empty =PYCLEBSCH_CACHE_DIR= means "disk tier off", for the same
+    reason. A shell line such as =export PYCLEBSCH_CACHE_DIR== therefore
+    disables the disk tier rather than pointing it at the working directory.
 - *Opting in* works two ways:
   - =set_cache_dir(path)=;
   - setting the environment variable =PYCLEBSCH_CACHE_DIR= before import.
@@ -104,21 +155,23 @@ A key has these fields:
 - Each file is a pickle of an envelope:
   #+begin_src python
   {
-      "format": CACHE_FORMAT_VERSION,          # layout of this envelope
+      "format_version": CACHE_FORMAT_VERSION,  # layout of this envelope
       "cgc_cache_version": CGC_CACHE_VERSION,  # CGC conventions
       "key": {"kind": ..., "product": ..., "sum_irrep": ..., "mult_idx": ..., "eps": ...},
-      "pyclebsch_version": "0.2.0" or None,    # informational; None if pyclebsch is not installed
-      "pyclebsch_commit": "cb35b4e…" or None,  # informational; None for PyPI and editable installs
+      "pyclebsch_version": "0.2.0" or None,    # None if pyclebsch is not installed
+      "pyclebsch_commit": "cb35b4e…" or None,  # None for PyPI and editable installs
       "data": <the CGC table>,
   }
   #+end_src
 - On read, the entry is rejected (warn, delete, treat as a miss) if any of
   these hold:
   - unpickling fails;
-  - =format= or =cgc_cache_version= differs from the current value;
+  - =format_version= or =cgc_cache_version= differs from the current value;
   - the stored key differs from the requested key.
   The last check catches files copied or merged into the wrong place, and a
   changed =EPS=.
+- =pyclebsch_version= and =pyclebsch_commit= are informational and never
+  checked.
 - *Writes are atomic.* The entry is pickled to a temporary file in the same
   directory, then moved onto its final name with =os.replace=, which is an
   atomic rename on the same filesystem. Readers see either no file or a
@@ -221,8 +274,8 @@ Each file under <cache dir>/v<CGC_CACHE_VERSION>/ is a pickled dict with keys:
                      editable installs, because neither records a commit.
                      None is expected, not an error.
   data               the CGC table
-Only format, cgc_cache_version and key are checked when an entry is read.
-pyclebsch_version and pyclebsch_commit are informational.
+Only format_version, cgc_cache_version and key are checked when an entry is
+read. pyclebsch_version and pyclebsch_commit are informational.
 """
 from __future__ import annotations
 
@@ -241,7 +294,7 @@ from pathlib import Path
 from typing import Literal
 
 # su_n_operators imports neither cgc nor cache, so there is no import cycle.
-from pyclebsch.su_n_operators import IrrepWeight, canonicalize_iweight
+from pyclebsch.su_n_operators import IrrepWeight, normalize_iweight, standardize_iweight_type
 
 # Version of the CGC *conventions* baked into cached tables. Bump it whenever a
 # change alters any stored table for the same key. That covers:
@@ -295,7 +348,7 @@ class CacheKey:
     def highest(cls, product_iweights: Iterable[Sequence[Integral]],
                 sum_iweight: Sequence[Integral], eps: float) -> CacheKey:
         """Key for the highest-weight table of sum_iweight in product_iweights."""
-        ...  # canonicalize_iweight on every i-weight; mult_idx=None
+        ...  # normalize_iweight(standardize_iweight_type(w)) on every i-weight; mult_idx=None
 
     @classmethod
     def lower(cls, product_iweights: Iterable[Sequence[Integral]],
@@ -478,14 +531,20 @@ def pool_kwargs() -> dict[str, object]:
 ** Changes to =pyclebsch/su_n_operators.py=
 
 #+begin_src python
-def canonicalize_iweight(iweight: Sequence[Integral]) -> IrrepWeight:
-    """Validate that every entry is an integer (numbers.Integral, which includes
-    numpy integer types), convert entries to int, and normalize so the last
-    entry is 0. Raises TypeError for non-integer entries such as floats."""
+def standardize_iweight_type(iweight: Sequence[Integral]) -> IrrepWeight:
+    """Return iweight as a tuple of plain Python ints, with values unchanged.
+
+    Every entry must be an integer (numbers.Integral, which includes numpy
+    integer types); anything else, such as a float, raises TypeError. Unlike
+    normalize_iweight, this does not shift the entries: it only fixes their
+    type, so that equal i-weights compare, hash and print identically whatever
+    integer type the caller used.
+    """
     ...
 #+end_src
 
-=normalize_iweight= is unchanged.
+=normalize_iweight= is unchanged. Callers that need both apply
+=normalize_iweight(standardize_iweight_type(w))=.
 
 ** Changes to =pyclebsch/cgc.py=
 
@@ -506,7 +565,7 @@ def canonicalize_iweight(iweight: Sequence[Integral]) -> IrrepWeight:
 from pyclebsch.cache import (
     CacheKey, _cache, set_cache_dir, get_cache_dir, clear_memory_cache, cache_stats,
 )
-from pyclebsch.su_n_operators import canonicalize_iweight
+from pyclebsch.su_n_operators import standardize_iweight_type
 
 type HighestWeightTable = dict[int, dict[ProductState, float]]   # copy index (1-based) -> {product state: CGC}
 type LowerWeightTable = dict[int, dict[ProductState, float]]     # sum-irrep state index -> {product state: CGC}
@@ -549,16 +608,17 @@ Inside the computations, the places that currently need a list (e.g.
 =set(product_iweights + [sum_irrep])= in the lower-weight function) convert
 the tuple with =list(...)=.
 
-=calc_cgcs= keeps its signature and return values, with three changes:
-- It canonicalizes every input i-weight (and =sum_iweight=, when given) with
-  =canonicalize_iweight= /before/ anything else, so invalid input raises
-  =TypeError= with no side effects.
+=calc_cgcs= keeps its signature and return values, with four changes:
+- It passes every input i-weight (and =sum_iweight=, when given) through
+  =standardize_iweight_type= /before/ anything else, so invalid input raises
+  =TypeError= with no side effects. Its existing normalization then runs on
+  the plain-=int= tuples.
 - It calls =_lower_weight_cgcs= (no copy) where it called
   =calc_lower_weight_cgcs=.
 - Its docstring gains a sentence: it is the public entry point for CGCs, and
   the tables it returns are the caller's to modify.
-- It passes the canonical i-weights to =find_direct_sum=, so sum-irrep keys
-  in results are plain =int= tuples.
+- It passes the type-standardized i-weights to =find_direct_sum=, so
+  sum-irrep keys in results are plain =int= tuples.
 
 =print_cgcs= and =check_cgcs= are unchanged.
 
@@ -748,16 +808,16 @@ process-global.
 * Order of work
 
 Each step is one commit: failing tests first, then code, then the full suite
-green.
+green. Record each step in [[*Work status][Work status]] when it is completed.
 
-0. *Baseline.* On a branch from =develop=, record reference outputs (kept
-   locally, not committed): L1 and 3×2×1 open-boundary B6 matrix elements,
-   and the site factors of 2×2×2 PBC T1 plaquette 0. Add
-   =tests/test_cgc_golden.py= with values from current code; it passes
-   immediately (it is the tripwire, not a red test).
-1. *Input canonicalization* (=canonicalize_iweight=; =calc_cgcs= validates
-   first and drops the eager =mkdir=). Tests: canonicalization, float
-   rejection, numpy entries sharing a key.
+0. *Baseline.* On =feature/cache_improvements= (branched from =develop=),
+   record reference outputs (kept locally, not committed): L1 and 3×2×1
+   open-boundary B6 matrix elements, and the site factors of 2×2×2 PBC T1
+   plaquette 0. Add =tests/test_cgc_golden.py= with values from current code;
+   it passes immediately (it is the tripwire, not a red test).
+1. *Input type standardization* (=standardize_iweight_type=; =calc_cgcs=
+   validates types first and drops the eager =mkdir=). Tests: type
+   standardization, float rejection, numpy entries sharing a key.
 2. *Memory tier.* Add =cache.py= with =CacheKey=, =CGCCache= (memory tier
    with the optional cap, plus the legacy disk code moved in unchanged),
    =CacheStats= and the compute/cached/public split in =cgc.py=. Tests: all
