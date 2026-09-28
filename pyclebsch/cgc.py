@@ -9,6 +9,7 @@ from pickle import load, dump
 
 from pyclebsch.su_n_operators import (
     normalize_iweight,
+    standardize_iweight_type,
     calc_dimension,
     calc_weight,
     find_gt_patterns,
@@ -604,6 +605,13 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     product_iweights are sorted; computed CGCs are then returned with
     product basis states unsorted according to the input product_iweights.
     """
+    # Convert entries to plain ints before anything else, so that invalid
+    # input raises TypeError with no side effects, and numpy integers share
+    # cache entries (and result keys) with the equivalent plain ints.
+    product_iweights = [standardize_iweight_type(iweight) for iweight in product_iweights]
+    if sum_iweight is not None:
+        sum_iweight = standardize_iweight_type(sum_iweight)
+
     # Normalize product_iweights.
     N = len(product_iweights[0])
     normalized_iweights = [normalize_iweight(iweight) for iweight in product_iweights]
@@ -626,12 +634,6 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
         product_irreps = [trivial, trivial]
         excess = normalized_iweights.count(trivial)-2
 
-    # Ensure directory for product_iweights exists to save CGCs.
-    cache_dir = _resolve_cache_dir()
-    if cache_dir is not None:
-        cgc_data_directory = cache_dir / str(product_irreps)
-        cgc_data_directory.mkdir(parents=True, exist_ok=True)
-    
     # reorder is created to unsort the product basis states in computed CGCs,
     # and to append trivial states (to the front, as they would be for a sorted state).
     # The ith index of mapping gives the index the ith unsorted irrep becomes

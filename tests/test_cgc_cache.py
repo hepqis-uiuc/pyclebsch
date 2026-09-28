@@ -83,3 +83,39 @@ def test_cgc_correctness_3x3bar(tmp_path):
     """CGCs for 3x3bar in SU(3) pass orthogonality check."""
     cgc.set_cache_dir(tmp_path / "CGC_Data")
     assert cgc.check_cgcs([(1, 0, 0), (1, 1, 0)])
+
+
+# --- Input types ---
+
+def _product_dirs(cache: Path) -> set[Path]:
+    """Directories that directly contain cache files, wherever they sit
+    below the cache root."""
+    return {f.parent for f in cache.rglob("*") if f.is_file()}
+
+
+def test_numpy_and_int_iweights_share_entry(tmp_path):
+    """numpy-integer i-weights reuse the entry written for plain ints, and
+    results carry plain-int sum-irrep keys."""
+    import numpy as np
+
+    cache = tmp_path / "CGC_Data"
+    cgc.set_cache_dir(cache)
+    int_result = cgc.calc_cgcs([(1, 0, 0), (1, 1, 0)])
+    numpy_result = cgc.calc_cgcs([tuple(np.array([1, 0, 0])), tuple(np.array([1, 1, 0]))])
+    assert len(_product_dirs(cache)) == 1
+    assert numpy_result == int_result
+    assert all(type(entry) is int for key in numpy_result for entry in key)
+
+
+def test_float_iweights_rejected_without_side_effects(tmp_path, monkeypatch):
+    """Float i-weights raise TypeError before anything is written, either in
+    the configured cache directory or in the working directory."""
+    cache = tmp_path / "disk"
+    work = tmp_path / "cwd"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    cgc.set_cache_dir(cache)
+    with pytest.raises(TypeError):
+        cgc.calc_cgcs([(1.0, 0.0, 0.0), (1.0, 1.0, 0.0)])
+    assert not cache.exists() or not any(cache.iterdir())
+    assert not any(work.iterdir())

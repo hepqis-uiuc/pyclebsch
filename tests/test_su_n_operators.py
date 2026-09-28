@@ -1,6 +1,6 @@
 """Tests for pyclebsch.su_n_operators.
 
-Covers normalize_iweight, calc_dimension, calc_casimir, calc_dynkin_index,
+Covers normalize_iweight, standardize_iweight_type, calc_dimension, calc_casimir, calc_dynkin_index,
 calc_weight, find_gt_patterns, ladder_op, find_suN_basis, find_direct_sum,
 find_symmetry_direct_sum, find_plethysms.
 
@@ -25,6 +25,7 @@ from pyclebsch.su_n_operators import (
     find_symmetry_direct_sum,
     ladder_op,
     normalize_iweight,
+    standardize_iweight_type,
 )
 
 
@@ -39,6 +40,30 @@ def test_normalize_iweight_already_normalized_passthrough():
     assert normalize_iweight((2, 1, 0)) == (2, 1, 0)
     assert normalize_iweight((0, 0, 0)) == (0, 0, 0)
     assert normalize_iweight((1, 0)) == (1, 0)
+
+
+# ---------- standardize_iweight_type ----------
+
+def test_standardize_iweight_type_converts_numpy_ints():
+    """numpy integer entries come back as plain ints with the same values."""
+    result = standardize_iweight_type(tuple(np.array([2, 1, 0])))
+    assert result == (2, 1, 0)
+    assert all(type(entry) is int for entry in result)
+    assert isinstance(result, tuple)
+
+
+def test_standardize_iweight_type_does_not_normalize():
+    """Unlike normalize_iweight, the values are left unchanged."""
+    assert standardize_iweight_type((2, 1, 1)) == (2, 1, 1)
+    assert standardize_iweight_type([3, 2, 1]) == (3, 2, 1)
+
+
+def test_standardize_iweight_type_rejects_floats():
+    """Non-integer entries raise TypeError, even when integral-valued."""
+    with pytest.raises(TypeError):
+        standardize_iweight_type((1.0, 0.0, 0.0))
+    with pytest.raises(TypeError):
+        standardize_iweight_type((1, 0, np.float64(0.0)))
 
 
 # ---------- calc_dimension ----------

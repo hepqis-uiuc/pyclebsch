@@ -1,4 +1,6 @@
+from collections.abc import Sequence
 from math import factorial
+from numbers import Integral
 import numpy as np
 from scipy.sparse import csr_array
 from itertools import product, combinations
@@ -19,6 +21,23 @@ def normalize_iweight(iweight: IrrepWeight) -> IrrepWeight:
     
     last = iweight[-1]
     return tuple(j - last for j in iweight)
+
+def standardize_iweight_type(iweight: Sequence[Integral]) -> IrrepWeight:
+    """Return iweight as a tuple of plain Python ints, with values unchanged.
+
+    Every entry must be an integer (numbers.Integral, which includes numpy
+    integer types); anything else, such as a float, raises TypeError. Unlike
+    normalize_iweight, this does not shift the entries: it only fixes their
+    type, so that equal i-weights compare, hash and print identically whatever
+    integer type the caller used.
+    """
+    for entry in iweight:
+        if not isinstance(entry, Integral):
+            raise TypeError(
+                f"i-weight entries must be integers; got {entry!r} "
+                f"({type(entry).__name__}) in {iweight!r}"
+            )
+    return tuple(int(entry) for entry in iweight)
 
 def calc_dimension(iweight: IrrepWeight) -> int:
     """Returns dimension of an irrep.

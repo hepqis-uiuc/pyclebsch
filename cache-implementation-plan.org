@@ -7,14 +7,15 @@
 decision is made./
 
 - *Stage:* the plan was approved on 2026-09-28 and is frozen; see
-  [[*Workflow rules for implementation sessions][Workflow rules for implementation sessions]] before doing anything. Step 0 is
-  done. Steps 1–5 have not been started.
-- *Branch:* =feature/cache_improvements=, at =3c82dc4=, which holds only
-  planning documents; its library code is identical to =develop= at
-  =cb35b4e=. Line numbers quoted in this plan refer to that revision; recheck
-  them before editing, in case =develop= has moved.
-- *Uncommitted work in the working tree:* step 0's two new files,
-  =pyclebsch/cache.py= and =tests/test_cgc_golden.py=. The reviewer commits.
+  [[*Workflow rules for implementation sessions][Workflow rules for implementation sessions]] before doing anything. Steps 0
+  and 1 are done. Steps 2–5 have not been started.
+- *Branch:* =feature/cache_improvements=, at =6e9e664= (step 0). Apart
+  from step 0, its library code is identical to =develop= at =cb35b4e=.
+  Line numbers quoted in this plan refer to that revision; recheck them
+  before editing, in case =develop= has moved.
+- *Uncommitted work in the working tree* (the reviewer commits):
+  - step 1: changes to =pyclebsch/su_n_operators.py=, =pyclebsch/cgc.py=,
+    =tests/test_su_n_operators.py= and =tests/test_cgc_cache.py=.
 - *Baseline for A2:* =out/cache-redesign-baseline/=, which is gitignored (by
   =out/*=) and so exists only in this checkout. It holds the step-0 reference
   outputs (one pickle per workload), =provenance.json= (commit, Python
@@ -36,8 +37,8 @@ decision is made./
 
 | Step | Content                            | Status      | Commit      | Notes                                          |
 |------+------------------------------------+-------------+-------------+------------------------------------------------|
-|    0 | Baseline and golden-value test     | done        | uncommitted | Deviation: see [[*Step 0: deviations][Step 0: deviations]] |
-|    1 | Input type standardization         | not started |             |                                                |
+|    0 | Baseline and golden-value test     | done        | =6e9e664=   | Deviation: see [[*Step 0: deviations][Step 0: deviations]] |
+|    1 | Input type standardization         | done        | uncommitted | Deviation: see [[*Step 1: deviations][Step 1: deviations]] |
 |    2 | Memory tier                        | not started |             |                                                |
 |    3 | Disk-tier hardening                | not started |             |                                                |
 |    4 | Defaults and propagation           | not started |             |                                                |
@@ -102,6 +103,48 @@ that implements it follows these rules:
     copies, flipping the phase of 8 ⊗ 8 → 8 copy 2, and swapping the two
     singlet copies of 3 ⊗ 3 ⊗ 3̄ ⊗ 3̄ each make it fail, by 1.12, 1.1 and
     0.49 respectively.
+
+** Step 1: deviations
+
+- *The two =calc_cgcs= input tests were appended to the existing
+  =tests/test_cgc_cache.py=,* in a new "Input types" section. The plan lists
+  them as part of that file's rewrite, which happens with the memory and
+  disk tiers. They will need to move into the rewritten file.
+- *=test_numpy_and_int_iweights_share_entry= checks disk files, not
+  =cache_stats()=.* The plan's version asserts that the numpy-integer call
+  adds 0 computations, but =cache_stats()= does not exist until step 2. So the
+  step-1 version configures a temporary disk cache, and asserts three things:
+  - the int and numpy calls leave their files in exactly one product
+    directory;
+  - the two results are equal;
+  - every returned sum-irrep key is a tuple of plain =int=s.
+  It finds the product directories as the parents of cache files, so it does
+  not depend on where they sit below the root. It should therefore survive
+  the =v<N>/= layout of step 3 unchanged. When =test_cgc_cache.py= is
+  rewritten, the plan's =computed=-count assertion should replace or join
+  the directory check.
+- *Small additions to the planned tests* (not deviations in substance):
+  - =test_standardize_iweight_type_rejects_floats= also checks a
+    =numpy.float64= entry;
+  - =test_standardize_iweight_type_does_not_normalize= also checks that a
+    list input comes back as a tuple;
+  - =test_float_iweights_rejected_without_side_effects= configures the disk
+    cache and changes into a scratch working directory, so both "gains
+    nothing" checks are meaningful at this step.
+- *Not done in step 1, by design:* the =calc_cgcs= docstring sentence ("the
+  public entry point; the tables it returns are the caller's to modify") and
+  the switch to =_lower_weight_cgcs=. Both belong with the memory tier in
+  step 2. The docstring's "CGCs are saved in CGC_Data" line is left for the
+  documentation work.
+- *Checks run in step 1:*
+  - red first: the =standardize_iweight_type= tests failed on import; the
+    numpy test found 2 product directories; the float test found a leftover
+    directory in the cache root;
+  - green: 211 passed (206 from step 0 plus 5 new);
+  - A2 =compare=: all three workloads pass, max difference 4.4e-16;
+  - every in-repo caller of =calc_cgcs= (=lattice_data.py=,
+    =plaquette_matrix_elements.py=, =check_cgcs=, =print_cgcs=, =run/demo.py=)
+    passes integer tuples, so none is affected by the new =TypeError=.
 
 * Purpose and scope
 
