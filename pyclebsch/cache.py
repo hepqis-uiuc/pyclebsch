@@ -66,7 +66,8 @@ from pyclebsch.su_n_operators import IrrepWeight, normalize_iweight, standardize
 CGC_CACHE_VERSION: int = 1
 
 # Version of the on-disk envelope format (the dict around the table), which
-# is independent of the CGC conventions above.
+# is independent of the CGC conventions above. Increment this constant
+# whenever the format of the metadata envelope is changed.
 CACHE_FORMAT_VERSION: int = 1
 
 # Environment variable that enables the disk tier and carries the setting to
@@ -313,7 +314,7 @@ class CGCCache:
         file is removed and the exception re-raised."""
         path = self._entry_path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        envelope = {
+        envelope = {            # You MUST increment CGC_FORMAT_VERSION if changing the structure of envelope.
             "format_version": CACHE_FORMAT_VERSION,
             "cgc_cache_version": CGC_CACHE_VERSION,
             "key": key.as_header(),
