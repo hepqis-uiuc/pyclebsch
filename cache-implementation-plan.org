@@ -12,9 +12,8 @@ decision is made./
   documents; its library code is identical to =develop= at =cb35b4e=. Line
   numbers quoted in this plan refer to that revision; recheck them before
   editing, in case =develop= has moved.
-- *Open decisions that block implementation* (see [[*Decisions for the reviewer][Decisions for the reviewer]]):
-  - 9, memory cap unit and default. Open; step 2 records the measurement
-    it needs.
+- *Open decisions that block implementation:* none (see
+  [[*Decisions for the reviewer][Decisions for the reviewer]]).
 - *Related documents* (all in the repository root):
   - =cache-issue-report.org=: the original task.
   - =cache-issue-findings-report.org=: the investigation. It is the evidence
@@ -147,7 +146,7 @@ Two separate steps turn a caller's i-weight into key material:
 
 - Layout: =<disk dir>/v<CGC_CACHE_VERSION>/<product dir>/<entry file>=.
   - The product directory and entry file keep today's readable style, built
-    from canonical =int= tuples, e.g. =[(1, 0, 0), (1, 1, 0)]/lower_weight_CGC_((2, 1, 0), 1)=.
+    from plain =int= tuples, e.g. =[(1, 0, 0), (1, 1, 0)]/lower_weight_CGC_((2, 1, 0), 1)=.
   - When a name would exceed =MAX_ENTRY_NAME_BYTES=, the SHA-256 hex digest
     of the key is used instead. The header (below) makes that safe.
   - Entries written by today's code sit outside any =v<N>= directory, so they
@@ -198,7 +197,8 @@ Two separate steps turn a caller's i-weight into key material:
 
 1. *No disk writes by default.* Computed CGCs live in memory for the life of
    the process. To persist them across runs, call =set_cache_dir(path)= or set
-   =PYCLEBSCH_CACHE_DIR=.
+   =PYCLEBSCH_CACHE_DIR=. There is no default location: the disk cache is only
+   used at a path you name, and =set_cache_dir("")= raises =ValueError=.
 2. =get_cache_dir()= returns =None= by default. A path that is set is returned
    as an absolute path.
 3. Existing =CGC_Data= folders are never read. They can be deleted.
@@ -217,18 +217,18 @@ Two separate steps turn a caller's i-weight into key material:
 
 | File                                                | Change                                                                                   |
 |-----------------------------------------------------+------------------------------------------------------------------------------------------|
-| =pyclebsch/cache.py=                                | *New.* Cache key, two-tier cache, configuration API, worker initializer, constants      |
-| =pyclebsch/cgc.py=                                  | Remove old cache globals and pickle I/O. Replace the two public lower-level functions with private compute / cached pairs. Canonicalize inputs. Drop eager =mkdir= |
-| =pyclebsch/su_n_operators.py=                       | Add =canonicalize_iweight=                                                                |
+| =pyclebsch/cache.py=                                | *New.* Cache key, two-tier cache, configuration API and environment variables, worker initializer, constants |
+| =pyclebsch/cgc.py=                                  | Remove old cache globals and pickle I/O. Replace the two public lower-level functions with private compute / cached pairs. Standardize input types. Drop eager =mkdir= |
+| =pyclebsch/su_n_operators.py=                       | Add =standardize_iweight_type=                                                            |
 | =pyclebsch/__init__.py=                             | Export =clear_memory_cache=, =cache_stats=, =set_memory_cache_limit= (keep =set_cache_dir=, =get_cache_dir=) |
 | =pyclebsch/matrix_elements/plaquette_matrix_elements.py= | Site-factor =Pool= gets the cache initializer. Remove the "may result in an EOFError" comment |
-| =tests/conftest.py=                                 | *New.* Session-level isolation from a developer's =PYCLEBSCH_CACHE_DIR=                 |
+| =tests/conftest.py=                                 | *New.* Session-level isolation from a developer's =PYCLEBSCH_*= environment variables   |
 | =tests/test_cgc_cache.py=                           | Rewrite: defaults, memory tier, disk tier, recovery, versioning                          |
 | =tests/test_cgc_golden.py=                          | *New.* Pinned CGC values keyed by =CGC_CACHE_VERSION=                                    |
 | =tests/test_cache_multiprocessing.py=               | *New.* =spawn=/=fork= worker propagation and the cold parallel run, each in a subprocess |
-| =tests/test_su_n_operators.py=                      | Tests for =canonicalize_iweight=                                                          |
+| =tests/test_su_n_operators.py=                      | Tests for =standardize_iweight_type=                                                      |
 | =tests/test_plaquette_matrix_elements.py=           | Correct the comment on the =parallelize= consistency test                                |
-| =README.md=                                         | Rewrite the intro note (line 4) and the "Caching CGC data to disk" section, including what a disk entry records and when =pyclebsch_commit= is =None= |
+| =README.md=                                         | Rewrite the intro note (line 4) and the "Caching CGC data to disk" section: explicit path, what a disk entry records and when =pyclebsch_commit= is =None= |
 | =run/demo.py=                                       | Update the banner that says CGCs are written to =./CGC_Data=                              |
 | =run/su_n_wilson_loop.py=                           | Remove the "EOFError … run again" note from the module docstring                          |
 | =run/gen_ymcirc_data.py=                            | Remove the "May cause EOFError. Rerun" comment                                            |
@@ -256,12 +256,13 @@ the proposal under review.
 
 Lookups go memory -> disk (only if a directory is configured) -> compute.
 The memory tier is always on and lives for the process. The disk tier is
-opt-in, via set_cache_dir() or the PYCLEBSCH_CACHE_DIR environment variable.
+opt-in, via set_cache_dir() or the PYCLEBSCH_CACHE_DIR environment variable,
+and is only ever used at a path the user names: there is no default location.
 
 Disk entry format
 -----------------
 Each file under <cache dir>/v<CGC_CACHE_VERSION>/ is a pickled dict with keys:
-  format             envelope layout version (CACHE_FORMAT_VERSION)
+  format_version     envelope layout version (CACHE_FORMAT_VERSION)
   cgc_cache_version  CGC convention version (CGC_CACHE_VERSION)
   key                kind, product, sum_irrep, mult_idx, eps of the table
   pyclebsch_version  installed pyclebsch version string, or None when
@@ -314,7 +315,8 @@ CGC_CACHE_VERSION: int = 1
 CACHE_FORMAT_VERSION: int = 1
 
 # Environment variable that enables the disk tier and carries the setting to
-# worker processes started with spawn or forkserver.
+# worker processes started with spawn or forkserver. Unset or empty means the
+# disk tier is off.
 ENV_VAR: str = "PYCLEBSCH_CACHE_DIR"
 
 # Longest readable file or directory name used before switching to a hashed
@@ -405,7 +407,8 @@ class CGCCache:
         return self._disk_dir
 
     def set_disk_dir(self, path: str | os.PathLike[str] | None) -> None:
-        """Resolve and store path (None turns the disk tier off); clear memory."""
+        """Resolve and store path (None turns the disk tier off); clear memory.
+        ValueError for an empty path."""
         ...
 
     def clear_memory(self) -> None:
@@ -441,11 +444,11 @@ class CGCCache:
         ...
 
     def _read_disk(self, key: CacheKey) -> CGCTable | None:
-        """Load and validate an entry. On unpickling errors (EOFError,
-        UnpicklingError, AttributeError, ModuleNotFoundError, ValueError,
-        TypeError, KeyError), format/version mismatch, or key mismatch: warn
-        with CGCCacheWarning, delete the file, count it in disk_rejected, and
-        return None."""
+        """Load and validate an entry; None if there is no file. On unpickling
+        errors (EOFError, UnpicklingError, AttributeError, ModuleNotFoundError,
+        ValueError, TypeError, KeyError), format_version/cgc_cache_version
+        mismatch, or key mismatch: warn with CGCCacheWarning, delete the file,
+        count it in disk_rejected, and return None."""
         ...
 
     def _write_disk(self, key: CacheKey, table: CGCTable) -> None:
@@ -489,8 +492,10 @@ _cache: CGCCache = CGCCache(disk_dir=_disk_dir_from_env())
 
 def set_cache_dir(path: str | os.PathLike[str] | None) -> None:
     """Enable the disk tier at path (resolved to an absolute path), or disable
-    it with None. Clears the in-memory cache and updates PYCLEBSCH_CACHE_DIR
-    so worker processes started afterwards use the same setting."""
+    it with None. There is no default location: path must be given, and an
+    empty path raises ValueError. Clears the in-memory cache and updates
+    PYCLEBSCH_CACHE_DIR so worker processes started afterwards use the same
+    setting."""
     ...
 
 
@@ -659,9 +664,11 @@ cleared.
 
 ** =tests/test_su_n_operators.py= (additions)
 
-- =test_canonicalize_iweight_normalizes_and_converts_numpy_ints=: returns a
-  plain-=int= normalized tuple.
-- =test_canonicalize_iweight_rejects_floats=: =TypeError= for =(1.0, 0.0, 0.0)=.
+- =test_standardize_iweight_type_converts_numpy_ints=: for numpy-integer
+  entries, returns a tuple of plain =int=s with the same values.
+- =test_standardize_iweight_type_does_not_normalize=: =(2, 1, 1)= comes back
+  as =(2, 1, 1)=, not =(1, 0, 0)=.
+- =test_standardize_iweight_type_rejects_floats=: =TypeError= for =(1.0, 0.0, 0.0)=.
 
 ** =tests/test_cgc_cache.py= (rewrite)
 
@@ -675,6 +682,13 @@ supersedes, if any.
 - =test_env_var_enables_disk_cache=: in a subprocess with
   =PYCLEBSCH_CACHE_DIR=tmp=, =get_cache_dir()= equals the resolved tmp path.
   Red today.
+- =test_empty_env_var_disables_disk_cache=: in a subprocess with
+  =PYCLEBSCH_CACHE_DIR== (empty) and a tmp working directory,
+  =get_cache_dir() is None=, and a =calc_cgcs= call leaves the working
+  directory empty. Red today.
+- =test_set_cache_dir_requires_explicit_path=: =set_cache_dir()= raises
+  =TypeError= (no default argument), and =set_cache_dir("")= raises
+  =ValueError= and leaves the settings unchanged. Red today.
 - =test_set_cache_dir_resolves_relative_path=: after =chdir(tmp)= and
   =set_cache_dir("rel")=, the result is =tmp/rel= resolved. Red today.
 - =test_set_cache_dir_updates_env_var= and =…_none_removes_env_var=. Red today.
@@ -725,6 +739,9 @@ supersedes, if any.
   findings report. Red today.
 - =test_previous_version_entries_are_ignored=: write entries, monkeypatch
   =CGC_CACHE_VERSION= to 2, and the call recomputes (and writes under =v2/=).
+- =test_format_version_mismatch_is_rejected=: rewrite an entry with
+  =format_version= set to =CACHE_FORMAT_VERSION + 1=; the call warns with
+  =CGCCacheWarning=, recomputes, and the file is replaced.
 - =test_entry_with_mismatched_key_is_rejected=: copy a valid entry file onto
   another key's path; the call warns with =CGCCacheWarning=, recomputes, and
   the file is replaced.
@@ -822,15 +839,15 @@ green. Record each step in [[*Work status][Work status]] when it is completed.
    with the optional cap, plus the legacy disk code moved in unchanged),
    =CacheStats= and the compute/cached/public split in =cgc.py=. Tests: all
    memory-tier tests, including the cap.
-3. *Disk-tier hardening.* Version namespace, envelope and header validation,
-   atomic writes, self-healing reads, hashed fallback names. Tests: all
-   disk-tier tests.
-4. *Defaults and propagation.* Disk off by default, =PYCLEBSCH_CACHE_DIR=,
-   path resolution, =set_cache_dir= clearing memory and updating the
-   environment, and =pool_kwargs()= in the site-factor =Pool=. Tests: the
-   defaults/configuration tests and =test_cache_multiprocessing.py=,
-   including the =forkserver= behavior test, whose outcome sets the README
-   wording. The conftest lands here.
+3. *Disk-tier hardening.* Version namespace, envelope and header
+   validation (=format_version=, =cgc_cache_version=, key), atomic writes,
+   self-healing reads, hashed fallback names. Tests: all disk-tier tests.
+4. *Defaults and propagation.* Disk off by default, the explicit-path rules,
+   =PYCLEBSCH_CACHE_DIR=, path resolution, =set_cache_dir= clearing memory
+   and updating the environment, and =pool_kwargs()= in the site-factor
+   =Pool=. Tests: the defaults/configuration tests and
+   =test_cache_multiprocessing.py=, including the =forkserver= behavior test,
+   whose outcome sets the README wording. The conftest lands here.
 5. *Docs, scripts and version.* Update README, SKILL.md, CLAUDE.md and the
    =run/= comments; set =pyproject.toml= to 0.2.0.
 
@@ -844,7 +861,9 @@ each can be reviewed on its own; step 4 flips the default.
 - A2. No change in results. After every step, the step-0 reference outputs
   are reproduced to within 1e-10 (=cgc.EPS=), with identical key sets.
 - A3. A default user writes nothing to disk (=test_nothing_written_by_default=,
-  =test_spawn_workers_keep_disk_disabled=).
+  =test_spawn_workers_keep_disk_disabled=), and the disk tier is never used at
+  a location the user did not name (=test_empty_env_var_disables_disk_cache=,
+  =test_set_cache_dir_requires_explicit_path=).
 - A4. An opt-in disk cache never serves entries from another convention
   version or layout (the legacy-layout and previous-version tests).
 - A5. Worker processes honor the parent's setting under =spawn=, and the cold
@@ -856,8 +875,9 @@ each can be reviewed on its own; step 4 flips the default.
 
 * Decisions for the reviewer
 
-Status after the reviewer's responses of 2026-09-24. Answers to individual
-questions do not approve the plan as a whole.
+Status after the reviewer's responses of 2026-09-24, 2026-09-27 and
+2026-09-28. Answers to individual questions do not approve the plan as a
+whole.
 
 1. *=set_cache_dir= writes =os.environ=. Resolved: yes.* The condition was
    that it affects only child processes and nothing else outside the original
@@ -889,7 +909,8 @@ questions do not approve the plan as a whole.
    passing the limit through =pool_kwargs()=: about a dozen lines. The design
    overview, code, tests and step 2 above reflect this.
 6. *Commit hash in the header. Resolved: record it, informational only.*
-   The condition was that =None= is handled and documented. It is:
+   The condition was that =None= is handled and
+   documented. It is:
    - =_installed_commit()= never raises. It returns the hash for git installs
      and =None= for index (PyPI) installs, editable installs, uninstalled
      source trees, and unreadable or malformed metadata. This follows what
@@ -905,9 +926,15 @@ questions do not approve the plan as a whole.
    - It is never used for validation. =CGC_CACHE_VERSION=, forced by the
      golden-value test, is the validated version. The reasons: the commit is
      unavailable for PyPI and editable installs, and it would invalidate the
-     cache on every commit for git installs. A source-hash "strict" mode stays
-     a possible later addition, not part of this plan.
+     cache on every commit for git installs.
 7. *Version number. Resolved: 0.2.0.*
+8. *Explicit path for the disk tier. Resolved on 2026-09-27: required.* The
+   findings report mentioned a per-user default such as =~/.cache/pyclebsch=
+   for opt-in users; it is not adopted. There is no default location, and
+   the empty-string cases are closed: =set_cache_dir("")= raises, and an
+   empty =PYCLEBSCH_CACHE_DIR= means "off". See Defaults and configuration,
+   and =test_set_cache_dir_requires_explicit_path= and
+   =test_empty_env_var_disables_disk_cache=.
 
 * Risks
 
@@ -919,4 +946,5 @@ questions do not approve the plan as a whole.
   store identical tables. That wastes time but is correct, and pyclebsch does
   not use threads today.
 - *Pickle remains for opt-in disk users (F6).* Replacing it is the separate
-  strategy S3, which is deferred.
+  strategy S3, which is deferred. Its problem statement is in
+  =disk-cache-backend-replacement-issue.org=.
