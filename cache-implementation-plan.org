@@ -6,17 +6,20 @@
 /Last updated 2026-09-28. Update this section whenever a step is completed or a
 decision is made./
 
-- *Stage:* the plan was approved on 2026-09-28 and is frozen; see
-  [[*Workflow rules for implementation sessions][Workflow rules for implementation sessions]] before doing anything. All
-  steps (0–5) are done; step 5 awaits the reviewer's commit.
-- *Branch:* =feature/cache_improvements=, at =a1ae09d= (step 4 and its
-  docstring follow-ups). Apart from steps 0–4, its library code is identical
-  to =develop= at =cb35b4e=.
-  Line numbers quoted in this plan refer to that revision; recheck them
-  before editing, in case =develop= has moved.
-- *Uncommitted work in the working tree* (the reviewer commits):
-  - step 5: changes to =README.md=, =run/demo.py=,
-    =.claude/skills/pyclebsch/SKILL.md=, =pyproject.toml= and =uv.lock=.
+- *Stage:* *complete.* The plan was approved on 2026-09-28 and is frozen;
+  all steps (0–5) are implemented and committed, and all acceptance criteria
+  A1–A6 were met (see Step 5: deviations). Any further work on this plan
+  follows [[*Workflow rules for implementation sessions][Workflow rules for implementation sessions]].
+- *Branch:* =feature/cache_improvements=, at =5e0ebb6= (step 5), branched
+  from =develop= at =cb35b4e=. It has not been merged into =develop=. Line
+  numbers quoted in the plan body refer to =cb35b4e=; those in this section
+  refer to the step at which they were recorded.
+- *Uncommitted work in the working tree:* none. The only untracked file is
+  the follow-up planning document =disk-cache-backend-replacement-issue.org=.
+- *Next:* merging =feature/cache_improvements= into =develop= is the
+  reviewer's decision. The follow-up work is replacing the pickle disk
+  format (strategy S3). It is described, independently of this plan, in
+  =disk-cache-backend-replacement-issue.org=.
 - *Baseline for A2:* =out/cache-redesign-baseline/=, which is gitignored (by
   =out/*=) and so exists only in this checkout. It holds the step-0 reference
   outputs (one pickle per workload), =provenance.json= (commit, Python
@@ -43,7 +46,7 @@ decision is made./
 |    2 | Memory tier                        | done        | =35d1cd1=   | Deviation: see [[*Step 2: deviations][Step 2: deviations]] |
 |    3 | Disk-tier hardening                | done        | =f2af789=   | Deviation: see [[*Step 3: deviations][Step 3: deviations]] |
 |    4 | Defaults and propagation           | done        | =afea4f4=, =a1ae09d= | Deviation: see [[*Step 4: deviations][Step 4: deviations]] |
-|    5 | Docs, scripts and version          | done        | uncommitted | Deviation: see [[*Step 5: deviations][Step 5: deviations]] |
+|    5 | Docs, scripts and version          | done        | =5e0ebb6=   | Deviation: see [[*Step 5: deviations][Step 5: deviations]] |
 
 ** Workflow rules for implementation sessions
 
