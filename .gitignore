@@ -163,4 +163,5 @@ cython_debug/
 
 # Project-specific output files
 CGC_Data/*
+cgc-cache/*
 out/*
