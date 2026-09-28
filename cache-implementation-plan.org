@@ -7,18 +7,16 @@
 decision is made./
 
 - *Stage:* the plan was approved on 2026-09-28 and is frozen; see
-  [[*Workflow rules for implementation sessions][Workflow rules for implementation sessions]] before doing anything. Steps
-  0–4 are done. Step 5 has not been started.
-- *Branch:* =feature/cache_improvements=, at =f2af789= (step 3). Apart
-  from steps 0–3, its library code is identical to =develop= at =cb35b4e=.
+  [[*Workflow rules for implementation sessions][Workflow rules for implementation sessions]] before doing anything. All
+  steps (0–5) are done; step 5 awaits the reviewer's commit.
+- *Branch:* =feature/cache_improvements=, at =a1ae09d= (step 4 and its
+  docstring follow-ups). Apart from steps 0–4, its library code is identical
+  to =develop= at =cb35b4e=.
   Line numbers quoted in this plan refer to that revision; recheck them
   before editing, in case =develop= has moved.
 - *Uncommitted work in the working tree* (the reviewer commits):
-  - step 4: changes to =pyclebsch/cache.py=, =pyclebsch/cgc.py= (docstring),
-    =pyclebsch/matrix_elements/plaquette_matrix_elements.py=,
-    =tests/test_cgc_cache.py=, =tests/test_plaquette_matrix_elements.py=,
-    =tests/test_lattice_data.py= and =.claude/skills/pyclebsch/SKILL.md=, and
-    the new files =tests/conftest.py= and =tests/test_cache_multiprocessing.py=.
+  - step 5: changes to =README.md=, =run/demo.py=,
+    =.claude/skills/pyclebsch/SKILL.md=, =pyproject.toml= and =uv.lock=.
 - *Baseline for A2:* =out/cache-redesign-baseline/=, which is gitignored (by
   =out/*=) and so exists only in this checkout. It holds the step-0 reference
   outputs (one pickle per workload), =provenance.json= (commit, Python
@@ -44,8 +42,8 @@ decision is made./
 |    1 | Input type standardization         | done        | =6ae563d=   | Deviation: see [[*Step 1: deviations][Step 1: deviations]] |
 |    2 | Memory tier                        | done        | =35d1cd1=   | Deviation: see [[*Step 2: deviations][Step 2: deviations]] |
 |    3 | Disk-tier hardening                | done        | =f2af789=   | Deviation: see [[*Step 3: deviations][Step 3: deviations]] |
-|    4 | Defaults and propagation           | done        | uncommitted | Deviation: see [[*Step 4: deviations][Step 4: deviations]] |
-|    5 | Docs, scripts and version          | not started |             | Before starting: see [[*Step 5: notes][Step 5: notes]] |
+|    4 | Defaults and propagation           | done        | =afea4f4=, =a1ae09d= | Deviation: see [[*Step 4: deviations][Step 4: deviations]] |
+|    5 | Docs, scripts and version          | done        | uncommitted | Deviation: see [[*Step 5: deviations][Step 5: deviations]] |
 
 ** Workflow rules for implementation sessions
 
@@ -568,6 +566,8 @@ removes the default location, resolves paths when they are set, and adds
 
 ** Step 5: notes
 
+/Status after step 5: all done./
+
 Items for step 5 found during earlier steps:
 - =README.md:4= (intro note) and =README.md:26–40= (the "Caching CGC data to
   disk" section) still describe the step-3 default, disk on at
@@ -583,6 +583,59 @@ Items for step 5 found during earlier steps:
   - =CLAUDE.md='s architecture entry for =cache.py=;
   - the SKILL.md cache lines, algorithm headings and =EOFError= caveat;
   - the =run/= =EOFError= notes.
+
+** Step 5: deviations
+
+- *The README carries the plan's release notes, as an "Upgrading from
+  pyclebsch 0.1" list.* The plan lists user-visible changes for 0.2.0 but
+  names no file for them. The repository has no changelog, so the README,
+  its only user-facing document, has them:
+  - the new default;
+  - old =CGC_Data= folders are ignored;
+  - the lower-level functions are no longer public;
+  - integer-only i-weights, with plain-=int= result keys.
+  The new helpers and =PYCLEBSCH_CACHE_DIR= are described in the Caching
+  section itself.
+- *The README's Caching section goes beyond the plan's files-table
+  description,* which names the explicit path, what a disk entry records,
+  and when =pyclebsch_commit= is =None=. The section also covers:
+  - the memory tier and its three helpers;
+  - =~= expansion and resolution;
+  - the empty-value rules;
+  - the =forkserver= limitation and its remedy, which the plan assigns to
+    the README;
+  - a *Trust* paragraph: loading a pickle can run code, so only trusted
+    cache directories should be used, and a cache should not be committed
+    or shared. This is finding F6. Replacing pickle is follow-up work
+    (=disk-cache-backend-replacement-issue.org=).
+  Every code snippet in the section was run against the installed package.
+- *Additional stale references fixed:* SKILL.md's repository-structure entry
+  for =CGC_Data/= ("Pickle cache for computed CGCs"), and the =run/demo.py=
+  comment saying the CGC dictionary "is written into the file system".
+- *=uv.lock= changed.* =uv run= re-locked the project after the version bump.
+  The only change is pyclebsch's own version line, =0.1.0= → =0.2.0=.
+- *Correction to an earlier observation about =pyclebsch.egg-info=.* It is
+  not an abandoned artifact. The project builds with setuptools, and
+  re-syncing the environment after the version bump regenerated it. The
+  version =importlib.metadata= reports is 0.2.0 both from the repository
+  root and from elsewhere.
+- *Acceptance criteria, checked at the end of step 5:*
+  - A1: 246 passed, including every test marked "red today";
+  - A2: =compare= passes on all three workloads (max difference 2.2e-16);
+  - A3: =test_nothing_written_by_default= and
+    =test_spawn_workers_keep_disk_disabled= pass. Running =uv run -m
+    run.demo= wrote no file;
+  - A4: the legacy-layout and previous-version tests pass;
+  - A5: =test_cache_multiprocessing.py= passes;
+  - A6: =test_memory_tier_computes_each_entry_once= passes. The re-measured
+    2×2×2 plaquette-0 site factors, serial, with default settings (memory
+    only), took 1.23 s in 3 of 3 runs (Linux container). That was 46 tables
+    computed and 23,749 memory hits, against 146.6 s with caching disabled
+    before this work. The findings' memory-only prototype took 1.01 s, so
+    this implementation is about 20% slower than the prototype. The likely
+    cause is that each =calc_cgcs= call now builds a cache key, which
+    standardizes and normalizes every i-weight; this was not profiled.
+  - ty: the same 19 known diagnostics in the three tracked modules.
 
 
 * Purpose and scope

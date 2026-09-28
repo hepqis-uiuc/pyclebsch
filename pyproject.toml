@@ -1,6 +1,6 @@
 [project]
 name = "pyclebsch"
-version = "0.1.0"
+version = "0.2.0"
 description = "Compute SU(N) Clebsch-Gordan coefficients and other quantities useful for lattice gauge theory simulations"
 readme = "README.md"
 requires-python = ">=3.12"
