@@ -66,8 +66,14 @@ from pyclebsch.su_n_operators import IrrepWeight, normalize_iweight, standardize
 CGC_CACHE_VERSION: int = 1
 
 # Version of the on-disk envelope format (the dict around the table), which
-# is independent of the CGC conventions above. Increment this constant
-# whenever the format of the metadata envelope is changed.
+# is independent of the CGC conventions above. Bump it whenever the layout
+# written by CGCCache._write_disk changes: a field added, removed or renamed,
+# a field of the stored key (CacheKey.as_header) changed, or a change in the
+# type of any value, including the structure of CGCTable itself.
+# tests/test_cgc_golden.py fails when the layout changes; the fix is to bump
+# this number and add the new layout there. Unlike a CGC_CACHE_VERSION bump,
+# this does not change the directory: old entries fail the format_version
+# check when read, and are deleted and recomputed.
 CACHE_FORMAT_VERSION: int = 1
 
 # Environment variable that enables the disk tier and carries the setting to
@@ -314,7 +320,8 @@ class CGCCache:
         file is removed and the exception re-raised."""
         path = self._entry_path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        envelope = {            # You MUST increment CGC_FORMAT_VERSION if changing the structure of envelope.
+        # Any change to this layout requires a CACHE_FORMAT_VERSION bump.
+        envelope = {
             "format_version": CACHE_FORMAT_VERSION,
             "cgc_cache_version": CGC_CACHE_VERSION,
             "key": key.as_header(),
