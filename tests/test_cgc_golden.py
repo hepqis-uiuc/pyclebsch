@@ -20,10 +20,8 @@ from dataclasses import dataclass
 import pytest
 
 import pyclebsch.cgc as cgc
-from pyclebsch.cache import CGC_CACHE_VERSION
-
-type IrrepWeight = tuple[int, ...]
-type ProductState = tuple[int, ...]
+from pyclebsch.cache import CGC_CACHE_VERSION, ProductState
+from pyclebsch.su_n_operators import IrrepWeight
 
 # Largest allowed difference between a pinned and a computed coefficient. It
 # equals cgc.EPS, the scale below which pyclebsch treats a coefficient as zero.

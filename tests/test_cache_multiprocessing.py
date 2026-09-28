@@ -82,8 +82,8 @@ def _dirs(tmp_path: Path) -> tuple[Path, Path]:
 
 def test_spawn_site_factor_workers_use_parent_disk_dir(tmp_path):
     """Under spawn, pyclebsch's own site-factor workers write to the parent's
-    disk directory, not to ./CGC_Data in the working directory, and the
-    parallel result equals the serial one."""
+    disk directory and nothing to the working directory, and the parallel
+    result equals the serial one."""
     disk, work = _dirs(tmp_path)
     out = _run_script(f"""
         mp.set_start_method("spawn")

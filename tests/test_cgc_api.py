@@ -9,9 +9,8 @@ Covers:
 - Error path on invalid sum_state
 
 The autouse restore_cache_dir fixture points the on-disk CGC cache at each
-test's tmp_path, so the repo's CGC_Data/ is never written to. Because
-set_cache_dir also clears the in-memory cache, every test starts with an
-empty cache.
+test's tmp_path. Because set_cache_dir also clears the in-memory cache,
+every test starts with an empty cache.
 """
 
 import math

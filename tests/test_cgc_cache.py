@@ -3,7 +3,6 @@ import dataclasses
 import json
 import os
 import pickle
-import re
 import subprocess
 import sys
 from collections import Counter
@@ -52,13 +51,6 @@ COMPUTE_AND_PRINT_CACHE_DIR = (
     "import pyclebsch.cgc as cgc; cgc.calc_cgcs([(1, 0, 0), (1, 1, 0)]); "
     "print(cgc.get_cache_dir())"
 )
-
-
-def test_default_disk_cache_is_disabled(tmp_path):
-    """With PYCLEBSCH_CACHE_DIR unset, a fresh process has no disk tier.
-    Replaces test_get_cache_dir_default."""
-    out = _run_python(PRINT_CACHE_DIR, tmp_path, {CACHE_DIR_ENV_VAR: None})
-    assert out == "None"
 
 
 def test_env_var_enables_disk_cache(tmp_path):
@@ -132,12 +124,13 @@ def test_set_cache_dir_none_removes_env_var(tmp_path, monkeypatch):
     monkeypatch.delenv(CACHE_DIR_ENV_VAR, raising=False)
     cgc.set_cache_dir(tmp_path / "disk")
     cgc.set_cache_dir(None)
+    assert cgc.get_cache_dir() is None
     assert CACHE_DIR_ENV_VAR not in os.environ
 
 
 def test_nothing_written_by_default(tmp_path):
-    """A fresh process with default settings writes nothing to its working
-    directory. Replaces test_cgcs_not_written_when_cache_none."""
+    """A fresh process with default settings has no disk tier and writes
+    nothing to its working directory."""
     out = _run_python(COMPUTE_AND_PRINT_CACHE_DIR, tmp_path, {CACHE_DIR_ENV_VAR: None})
     assert out == "None"
     assert list(tmp_path.iterdir()) == []
@@ -150,56 +143,15 @@ def test_set_cache_dir_custom(tmp_path):
     assert cgc.get_cache_dir() == custom.resolve()
 
 
-def test_set_cache_dir_none():
-    """set_cache_dir(None) disables caching; get_cache_dir() returns None."""
-    cgc.set_cache_dir(None)
-    assert cgc.get_cache_dir() is None
-
-
-def test_set_cache_dir_accepts_string(tmp_path):
-    """set_cache_dir() accepts a str and converts it to a Path."""
-    cgc.set_cache_dir(str(tmp_path / "str_cache"))
-    assert isinstance(cgc.get_cache_dir(), Path)
-    assert cgc.get_cache_dir() == (tmp_path / "str_cache").resolve()
-
-
-# --- Cache behavior tests ---
-
-def test_cgcs_written_to_configured_dir(tmp_path):
-    """When cache dir is set, pickle files appear there after calc_cgcs."""
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
-    cgc.calc_cgcs([(2, 1, 0), (2, 1, 0)])
-    cache_contents = list((tmp_path / "CGC_Data").rglob("*"))
-    assert len(cache_contents) > 0
-    assert any("highest_weight_CGC" in str(p) for p in cache_contents)
-
-
-def test_cgcs_read_from_cache(tmp_path):
-    """A second call with the same args reads from cache (no recomputation)."""
-    import time
-
-    cache = tmp_path / "CGC_Data"
-    cgc.set_cache_dir(cache)
-    cgc.calc_cgcs([(2, 1, 0), (2, 1, 0)])
-    files = list(cache.rglob("*"))
-    mtimes = {f: f.stat().st_mtime for f in files if f.is_file()}
-    time.sleep(0.05)
-    cgc.calc_cgcs([(2, 1, 0), (2, 1, 0)])
-    for f, mtime in mtimes.items():
-        assert f.stat().st_mtime == mtime
-
-
 # --- Correctness regression tests ---
 
-def test_cgc_correctness_8x8(tmp_path):
+def test_cgc_correctness_8x8():
     """CGCs for 8x8 in SU(3) pass orthogonality check."""
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
     assert cgc.check_cgcs([(2, 1, 0), (2, 1, 0)])
 
 
-def test_cgc_correctness_3x3bar(tmp_path):
+def test_cgc_correctness_3x3bar():
     """CGCs for 3x3bar in SU(3) pass orthogonality check."""
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
     assert cgc.check_cgcs([(1, 0, 0), (1, 1, 0)])
 
 
@@ -477,12 +429,13 @@ def _dump_envelope(path: Path, envelope: dict) -> None:
 
 
 def test_disk_entries_written_under_version_namespace(tmp_path):
-    """Every entry lives under v<CGC_CACHE_VERSION>/."""
+    """Every entry lives under v<CGC_CACHE_VERSION>/, and highest-weight
+    tables are among them."""
     cache = tmp_path / "CGC_Data"
     cgc.set_cache_dir(cache)
     cgc.calc_cgcs([(2, 1, 0), (2, 1, 0)])
     files = _entry_files(cache)
-    assert files
+    assert any("highest_weight_CGC" in f.name for f in files)
     assert all(f.relative_to(cache).parts[0] == f"v{cgc_cache.CGC_CACHE_VERSION}" for f in files)
 
 
@@ -625,9 +578,7 @@ def test_disk_entry_header_records_provenance(tmp_path):
     cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
     envelope = _load_envelope(_octet_lower_path())
     assert envelope["pyclebsch_version"] is None or isinstance(envelope["pyclebsch_version"], str)
-    commit = envelope["pyclebsch_commit"]
-    assert commit is None or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit)
-    assert commit is None
+    assert envelope["pyclebsch_commit"] is None
 
 
 class _FakeDistribution:

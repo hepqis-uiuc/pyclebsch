@@ -258,7 +258,6 @@ class CGCCache:
         """Store in memory as the most recently used entry, then evict down
         to the cap."""
         self._memory[key] = table
-        self._memory.move_to_end(key)
         self._evict_over_limit()
 
     def _evict_over_limit(self) -> None:

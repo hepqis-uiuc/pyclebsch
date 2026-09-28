@@ -602,10 +602,7 @@ def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: 
     # cache entries (and result keys) with the equivalent plain ints.
     product_iweights = [standardize_iweight_type(iweight) for iweight in product_iweights]
     if sum_iweight is not None:
-        # Normalized here, so that calls naming the same irrep by different
-        # i-weights share cache entries without relying on later code to
-        # normalize.
-        sum_iweight = normalize_iweight(standardize_iweight_type(sum_iweight))
+        sum_iweight = standardize_iweight_type(sum_iweight)
 
     # Normalize product_iweights.
     N = len(product_iweights[0])

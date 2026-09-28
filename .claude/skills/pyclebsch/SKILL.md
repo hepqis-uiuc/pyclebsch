@@ -24,7 +24,6 @@ user_invocable: true
 - `pyclebsch/matrix_elements/helpers.py` — Conjugate irrep, irrep enumeration
 - `run/gen_ymcirc_data.py` — JSON generation script for ymcirc
 - `tests/` — pytest suite
-- `CGC_Data/` — gitignored; the default disk cache of pyclebsch ≤ 0.1. Nothing writes it now unless `set_cache_dir()` points there
 
 **Dependencies**: numpy, scipy, more-itertools, tqdm. Managed with `uv`.
 
