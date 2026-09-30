@@ -4,6 +4,7 @@ PLAQUETTE MATRIX ELEMENTS
 
 import numpy as np
 from tqdm import tqdm
+from ..cache import pool_kwargs
 from ..cgc import calc_cgcs
 from itertools import product
 from multiprocessing import Pool
@@ -269,11 +270,9 @@ def calc_plaquette_site_factors(N, P, sites, plaquettes, truncation_irreps, sing
                 add_args(s, num_links_at_site, afund, fund, False, False, ij_idxs, ctrl_idxs_and_dirs, singlets[num_links_at_site])
             case 4:
                 add_args(s, num_links_at_site, afund, afund, True, False, ij_idxs, ctrl_idxs_and_dirs, singlets[num_links_at_site])
-    
-    # If Clebsch-Gordan coefficients have not been computed before, a parallelized
-    # computation may result in an EOFError.
+
     if parallelize:
-        with Pool(5) as pool:
+        with Pool(5, **pool_kwargs()) as pool:
             sf_res = pool.starmap(func=plaquette_site_factor, iterable=tqdm(site_factor_args, desc='Site Factors', total=len(site_factor_args), leave=False), chunksize=1)
     else:
         sf_res = []

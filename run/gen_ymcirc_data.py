@@ -296,7 +296,7 @@ if __name__ == "__main__":
         },
     ]
     lattice_cases = lattice_cases_T_truncations_PBC + lattice_cases_B_truncations_PBC
-    parallelize = True  # May cause EOFError. Rerun if this happens.
+    parallelize = True
 
     # Data generation.
     # Note: tuple data are converted to string types to prevent the JSON file

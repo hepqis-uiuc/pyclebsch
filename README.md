@@ -1,7 +1,7 @@
 # pyclebsch
 A Python package for calculating SU(N) Clebsch-Gordan coefficients (CGCs). It is largely based on the algorithm presented in https://homepages.physik.uni-muenchen.de/~vondelft/PapersVonDelft/Alex2011.pdf, with some modifications to account for residual symmetric group symmetries that can be present in computed CGCs.
 
-Note that by default, Clebsch-Gordan coefficients are cached in a `CGC_Data` directory in whatever the current working directory is. See the "Caching" section below for more information on this behavior.
+Computed Clebsch-Gordan coefficients are cached in memory by default; to save to disk, see "Caching CGC data" below.
 
 This codebase is currently at an 'alpha' stage of development. Breaking changes should be expected.
 
@@ -23,21 +23,42 @@ After setting up WSL there is a checklist of programs you may need before procee
 1. Download / update Git by running `sudo apt-get install git`.
 2. Download / update Python3 by running `sudo apt install python3 python3-pip`
 
-## Caching CGC data to disk
-In the process of running, computed Clebsch-Gordan coefficients are by default cached in a `CGC_Data` folder in the current working directory. This is fine for some use cases, but if you anticipate running the same script from multiple directories, it can lead to unnecessary data duplication. To avoid such duplication, the cache directory can be set with an absolute path in the following way:
+## Caching CGC data
+### In memory (always on)
+Each table of CGCs is computed at most once per process and then kept in memory, however many times it is requested. The memory cache can be inspected and controlled with:
 ```Python
-import pyclebsch.cgc as cgc
+import pyclebsch
 
-cgc.set_cache_dir("/path/to/cache/dir/desired-cgc-dir-name")
-```
-In this case, computed Clebsch-Gordan coefficients will be saved in the folder `desired-cgc-dir-name` at the absolute path specified. Alternatively, caching to disk can be disabled via
-```Python
-import pyclebsch.cgc as cgc
-
-cgc.set_cache_dir(None)
+pyclebsch.cache_stats()               # hits, computations, disk reads/writes since start
+pyclebsch.clear_memory_cache()        # drop every in-memory table
+pyclebsch.set_memory_cache_limit(500) # keep at most 500 tables (least recently used are dropped); None = no limit (the default)
 ```
 
-If the default caching behavior doesn't work for your use case, configuring the cache directory should be done before using any other `pyclebsch` functionality.
+### On disk (opt-in)
+By default nothing is written to disk, so every new process computes the CGC tables it needs again. For small tensor products this is often fine, but single large products can take much longer (for example, finding the singlet in 3 ⊗ 3̄ ⊗ 8 ⊗ 8 ⊗ 6 ⊗ 6̄ can take upwards of a minute on a consumer-grade laptop). To keep tables across runs, name a directory, either in code
+```Python
+import pyclebsch
+
+pyclebsch.set_cache_dir("~/cgc-cache")   # a leading ~ is expanded; the path is resolved to an absolute path when set
+pyclebsch.set_cache_dir(None)            # turn the disk cache off again
+```
+or through the environment, before Python starts:
+```shell
+export PYCLEBSCH_CACHE_DIR="$HOME/cgc-cache"
+```
+There is no default location: `set_cache_dir("")` raises `ValueError`, and an empty `PYCLEBSCH_CACHE_DIR` means that CGCs will not be written to disk. A relative path is resolved against the working directory at the time of the call, so a later `os.chdir` does not move the cache. `set_cache_dir` may be called at any time; it also clears the in-memory cache.
+
+**Multiprocessing.** `set_cache_dir` records the directory in `PYCLEBSCH_CACHE_DIR`, so worker processes started afterwards use the same directory, and pyclebsch's own worker pools also receive the setting explicitly. One case needs care: with the `forkserver` start method (the default on Linux from Python 3.14), a `multiprocessing.Pool` you create yourself after the fork server has started does not see a later `set_cache_dir` call. Configure the cache before creating your first pool, or create pools with `Pool(n, **pyclebsch.cache.pool_kwargs())`.
+
+**What is stored.** Entries live under `<cache dir>/v<N>/`, where `N` is the version of the CGC conventions (`pyclebsch.cache.CGC_CACHE_VERSION`), with one file per table. Each file records metadata alongside the CGCs: a metadata "envelope" format version, the CGC convention version, the table's key (including the zero threshold `EPS`), the installed pyclebsch version, and the git commit it was installed from. The commit is only known for installs made directly from a git repository; it is `None` for installs from a package index and for editable installs. An entry whose versions or key do not match, or that cannot be read, is deleted with a `CGCCacheWarning` and recomputed. Entries are written atomically, so several processes can share a cache directory.
+
+**Trust.** Cache entries are Python pickle files, and loading a pickle can run arbitrary code. Only point pyclebsch at directories you trust, and do not commit a cache directory or share it with others.
+
+### Upgrading from pyclebsch 0.1
+- Nothing is written to disk by default, and `get_cache_dir()` returns `None` until a directory is set. Scripts that relied on `./CGC_Data` persisting across runs should call `set_cache_dir` or set `PYCLEBSCH_CACHE_DIR`.
+- Old `CGC_Data` folders are never read; they can be deleted.
+- `calc_highest_weight_cgcs` and `calc_lower_weight_cgcs` are no longer public. Use `calc_cgcs`, which covers every access pattern (all irreps, one irrep, one copy, one state, one coefficient) and sorts the product for you.
+- i-weights must have integer entries. numpy integers are accepted and converted, so the sum-irrep keys in `calc_cgcs` results are plain `int` tuples; floats raise `TypeError`.
 
 ## Usage/citations
 If you use this code in a paper, please cite:

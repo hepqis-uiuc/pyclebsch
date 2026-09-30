@@ -14,6 +14,7 @@ user_invocable: true
 
 **Repository structure**:
 - `pyclebsch/cgc.py` — CGC computation (highest-weight, lower-weight, validation)
+- `pyclebsch/cache.py` — CGC table cache (in-memory tier, optional disk tier) and its configuration API
 - `pyclebsch/su_n_operators.py` — SU(N) irrep dimensions, GT patterns, ladder operators, decompositions, plethysms, Casimir, Dynkin index
 - `pyclebsch/symmetric_group/tableaux.py` — Young tableaux, partitions, rim hooks
 - `pyclebsch/symmetric_group/young_symmetrizer.py` — Young symmetrizer construction
@@ -23,7 +24,6 @@ user_invocable: true
 - `pyclebsch/matrix_elements/helpers.py` — Conjugate irrep, irrep enumeration
 - `run/gen_ymcirc_data.py` — JSON generation script for ymcirc
 - `tests/` — pytest suite
-- `CGC_Data/` — Pickle cache for computed CGCs
 
 **Dependencies**: numpy, scipy, more-itertools, tqdm. Managed with `uv`.
 
@@ -121,13 +121,13 @@ Progressive filtering — provide more parameters for more specific results:
 
 **Normalization**: i-weights normalized so last component = 0.
 
-**Caching**: Pickle files in `CGC_Data/[str(sorted_product_irreps)]/` with filenames `highest_weight_CGC_(sum_iweight)` and `lower_weight_CGC_((sum_iweight, mult_idx))`.
+**Caching** (`pyclebsch/cache.py`): every table is computed at most once per process and kept in an in-memory cache (`clear_memory_cache()`, `cache_stats()`, optional `set_memory_cache_limit(n)`). Behind it is a disk cache: one pickle file per table in `<cache dir>/v<CGC_CACHE_VERSION>/[str(sorted_product_irreps)]/`, with filenames `highest_weight_CGC_(sum_iweight)` and `lower_weight_CGC_((sum_iweight, mult_idx))`; a directory or file name longer than 200 bytes is replaced by `sha256-<digest>`. Each file holds an envelope (format and convention versions, the key including `EPS`, pyclebsch version and commit, and the table). An entry whose envelope does not match, or that cannot be read, is deleted with a `CGCCacheWarning` and recomputed. Writes are atomic (temporary file, then `os.replace`). Entries outside `v<CGC_CACHE_VERSION>/`, including every entry written by pyclebsch ≤ 0.1, are never read. The disk cache is off by default and has no default location: `set_cache_dir(path)` (or the `PYCLEBSCH_CACHE_DIR` environment variable, read at import) turns it on at that path, resolved to an absolute path with `~` expanded; `set_cache_dir(None)` turns it off. `set_cache_dir` clears the in-memory cache and writes `PYCLEBSCH_CACHE_DIR`, so worker processes started afterwards use the same directory. pyclebsch's site-factor `Pool` also passes the settings through `pool_kwargs()`. A user's own `forkserver` `Pool` created after the fork server started does not see a later `set_cache_dir` call unless it is built with `Pool(n, **pool_kwargs())`.
 
 **Only nonzero CGCs stored** (threshold `EPS = 1e-10`).
 
 **Phase convention**: CGC of highest-weight product basis state is positive.
 
-### Highest-Weight Algorithm (`calc_highest_weight_cgcs`)
+### Highest-Weight Algorithm (`_compute_highest_weight_cgcs`, cached via `_highest_weight_cgcs`)
 
 Reference: Eqs. (33)-(34) and Pg. 13 of Alex et al.
 
@@ -141,7 +141,7 @@ Reference: Eqs. (33)-(34) and Pg. 13 of Alex et al.
 
 **Step 5 — Phase fix**: For each multiplicity, find the smallest (in tuple order) product state with nonzero CGC. Flip sign of entire CGC vector if that coefficient is negative.
 
-### Lower-Weight Algorithm (`calc_lower_weight_cgcs`)
+### Lower-Weight Algorithm (`_compute_lower_weight_cgcs`, cached via `_lower_weight_cgcs`)
 
 Reference: Pg. 14 of Alex et al.
 
@@ -396,7 +396,6 @@ Multiplies all four site factors with dimension coefficient `sqrt(d1 * d3)`. Rou
 
 - `calc_plaquette_site_factors`: 5-worker `multiprocessing.Pool` for site factor computation
 - `calc_plaquette_elements`: 5-worker pool for glueing (each s1 seed is independent)
-- **Caveat**: First run may hit `EOFError` if CGCs not yet cached (parallel pickle reads). Rerun to fix.
 
 ---
 
@@ -484,4 +483,4 @@ All keys are stringified tuples (JSON doesn't preserve Python tuple types).
 
 **Demo**: `uv run -m run.demo`
 
-**CGC cache**: Stored in `CGC_Data/` relative to package root. Delete to force recomputation.
+**CGC cache**: In memory for the life of each process; on disk only at a directory set with `set_cache_dir()` or `PYCLEBSCH_CACHE_DIR`. To force recomputation, call `clear_memory_cache()` and, if a disk cache is configured, delete its directory. Folders named `CGC_Data/` left by pyclebsch ≤ 0.1 are never read and can be deleted.
