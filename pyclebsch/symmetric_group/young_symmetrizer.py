@@ -139,6 +139,9 @@ def young_symmetrizer(tableaux: list[YoungTableau], idx_list: list[list]) -> Gen
 
         # If the tableau is already row-ordered or column-ordered,
         # then the Young symmetrizer can be immediately built.
+        # Note: The product of two row symmetrizers or two column
+        # antisymmetrizers simplifies to one (anti)symmetrizer.
+        # Hence, only three lists of permutations appear in perms_lists.
         # ~Theorem 4
 
         if is_row_ordered:
@@ -179,10 +182,12 @@ def young_symmetrizer(tableaux: list[YoungTableau], idx_list: list[list]) -> Gen
             # the Mth ancestor tableau is row-ordered or column-ordered.
             # Each configuration is slightly different. ancestor_..._perms
             # describes the order in which the ancestor row or column
-            # permutations appear in a Young symmetrizer.
+            # permutations appear in a Young symmetrizer. 2M lists of
+            # permutations are added to perms_lists, relative to the
+            # two cases above, bringing the total to num=2M+3.
             # ~Theorem 5
 
-            num = 2*M + 4
+            num = 2*M + 3
             if is_row_ordered:
                 if M%2==0:
                     ancestor_col_row_perms = [ancestor_perms[i][1] if i%2==0 else ancestor_perms[i][0] for i in range(M)]
