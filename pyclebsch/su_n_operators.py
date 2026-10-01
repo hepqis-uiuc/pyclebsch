@@ -1,16 +1,45 @@
+from collections.abc import Sequence
 from math import factorial
+from numbers import Integral
 import numpy as np
 from scipy.sparse import csr_array
 from itertools import product, combinations
 from collections import Counter, defaultdict
 from functools import reduce
 from more_itertools import locate
+from typing import Optional
 
 from pyclebsch.symmetric_group.plethysm_utils import _Adams, _class_character, _class_order
 from pyclebsch.symmetric_group.tableaux import find_partitions
 
 
-def calc_dimension(iweight: tuple) -> int:
+type IrrepWeight = tuple[int, int, ...] # Length N corresponds to SU(N) iweight.
+
+def normalize_iweight(iweight: IrrepWeight) -> IrrepWeight:
+    """Returns normalized i-weight.
+    """
+    
+    last = iweight[-1]
+    return tuple(j - last for j in iweight)
+
+def standardize_iweight_type(iweight: Sequence[int]) -> IrrepWeight:
+    """Return iweight as a tuple of plain Python ints, with values unchanged.
+
+    Every entry must be an integer (numbers.Integral, which includes numpy
+    integer types); anything else, such as a float, raises TypeError. Unlike
+    normalize_iweight, this does not shift the entries: it only fixes their
+    type, so that equal i-weights compare, hash and print identically whatever
+    integer type the caller used.
+    """
+    for entry in iweight:
+        if not isinstance(entry, Integral):
+            raise TypeError(
+                f"i-weight entries must be integers; got {entry!r} "
+                f"({type(entry).__name__}) in {iweight!r}"
+            )
+    return tuple(int(entry) for entry in iweight)
+
+def calc_dimension(iweight: IrrepWeight) -> int:
     """Returns dimension of an irrep.
     ~Eq. (22)
     """
@@ -21,6 +50,35 @@ def calc_dimension(iweight: tuple) -> int:
             dim *= 1 + (iweight[jp] - iweight[j])/(j - jp)
 
     return round(dim)
+
+
+def calc_casimir(iweight: IrrepWeight) -> float:
+    """Returns the quadratic Casimir eigenvalue of an irrep.
+    """
+
+    N = len(iweight)
+    R = normalize_iweight(iweight)
+
+    res = N*sum(R[i]*(R[i] + N - 1 - 2*i) for i in range(N))
+    res -= sum(R)**2
+
+    return res/(2*N)
+
+
+def calc_dynkin_index(iweight: IrrepWeight) -> float:
+    """Returns the Dynkin index of an irrep.
+    """
+
+    N = len(iweight)
+    R = normalize_iweight(iweight)
+
+    cas = N*sum(R[i]*(R[i] + N - 1 - 2*i) for i in range(N))
+    cas -= sum(R)**2
+
+    dimR = calc_dimension(R)
+    dimG = N**2 - 1
+
+    return cas*dimR/(2*N*dimG)
 
 
 def calc_weight(gt_pattern: list[list], kind: str) -> list:
@@ -54,7 +112,8 @@ def calc_weight(gt_pattern: list[list], kind: str) -> list:
     else:
         raise ValueError('Invalid weight kind.')
 
-def find_gt_patterns(iweight: tuple) -> list[list[list]]:
+
+def find_gt_patterns(iweight: IrrepWeight) -> list[list[list]]:
     """Creates all GT-patterns for an irrep.
     ~Eqs. (20)-(21)
     """
@@ -140,7 +199,7 @@ def ladder_op(gt_patterns: list[list[list]], k: int, kind: str) -> list:
     return linear_combination
 
 
-def find_suN_basis(iweight: tuple) -> list[csr_array]:
+def find_suN_basis(iweight: IrrepWeight) -> list[csr_array]:
     """Returns a basis for an irrep of su(N).
     The basis matrices are returned as orthogonal sparse arrays,
     normalized to 0.5 in the fundamental representation.
@@ -226,7 +285,7 @@ def find_suN_basis(iweight: tuple) -> list[csr_array]:
     return basis
 
 
-def find_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> dict[tuple, int]:
+def find_direct_sum(product_iweights: list[IrrepWeight], sum_iweight: Optional[IrrepWeight]=None) -> dict[tuple, int]:
     """Decomposes a direct product of irreps (product_iweights) into a
     direct sum of irreps. Returns a dictionary whose keys are the irreps
     appearing in the direct sum, and whose values are the multiplicities of
@@ -235,13 +294,14 @@ def find_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> d
     ~Pg. 11
     """
 
-    # For efficiency, sort the irreps from lowest weight to highest weight.
+    # For efficiency, sort the irreps from lowest dimension to highest dimension.
+    # Moreover, normalize the i-weights to avoid redundancies.
     # decomp_memo records decompositions done throughout the algorithm, so
     # repititions are avoided. gt_memo records GT-patterns of irreps
     # encountered in the algorithm to avoid duplicate calculations.
 
-    iweights = sorted(product_iweights, key=calc_dimension)
-    decomp_memo, gt_memo = {},{}
+    iweights = sorted((tuple(j-iweight[-1] for j in iweight) for iweight in product_iweights), key=calc_dimension)
+    decomp_memo,gt_memo = {},{}
 
     def decompose_two_irreps(R,Rp):
 
@@ -319,14 +379,15 @@ def find_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> d
     # are then sorted lexicographically for neatness.
 
     if sum_iweight is not None:
-        return direct_sum.count(sum_iweight)
+        sum_irrep = normalize_iweight(sum_iweight)
+        return direct_sum.count(sum_irrep)
     else:
         direct_sum = Counter(direct_sum)
         direct_sum = dict(sorted(direct_sum.items(), reverse=True))
         return direct_sum
 
 
-def find_symmetry_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=None) -> tuple[dict, list]:
+def find_symmetry_direct_sum(product_iweights: list[IrrepWeight], sum_iweight: Optional[IrrepWeight]=None) -> tuple[dict, list]:
     """Decomposes a direct product of irreps (product_iweights) into a
     direct sum of irreps and provides the symmetry group irreps they
     transform under. Returns a dictionary of the direct sum and a list
@@ -336,14 +397,16 @@ def find_symmetry_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=N
     """
 
     # Find all plethysms for each repeated irrep in product_iweights.
-    # keys is nearly list(set(product_iweights)), except the order of
+    # i-weights are normalized in normalized_iweights to identify repeated irreps.
+    # keys is nearly list(set(normalized_iweights)), except the order of
     # the irreps in keys is that of the irreps in plethysms. indices
     # is a list of lists of indices of each irrep in keys as it appears
-    # in product_iweights.
+    # in normalized_iweights.
 
-    plethysms = {R: find_plethysms(R,num) for R,num in Counter(product_iweights).items()}
+    normalized_iweights = [tuple(j-iweight[-1] for j in iweight) for iweight in product_iweights]
+    plethysms = {R: find_plethysms(R,num) for R,num in Counter(normalized_iweights).items()}
     keys = list(plethysms.keys())
-    indices = [list(locate(product_iweights, lambda x: x==R)) for R in keys]
+    indices = [list(locate(normalized_iweights, lambda x: x==R)) for R in keys]
 
     # direct_sum initializes the dictionary for the final result.
     # The plethysm polynomials are multiplied together, leading to
@@ -376,14 +439,15 @@ def find_symmetry_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=N
                 for sum_irrep in decomp:
                     direct_sum[sum_irrep][partitions] += decomp[sum_irrep]*mult
     else:
+        sum_irrep = normalize_iweight(sum_iweight)
         for irreps in product(*(plethysms[R] for R in plethysms)):
             if len(irreps)==1:
-                if irreps[0]==sum_iweight:
+                if irreps[0]==sum_irrep:
                     multiplicity = 1
                 else:
                     multiplicity = 0
             else:
-                multiplicity = find_direct_sum(list(irreps), sum_iweight)
+                multiplicity = find_direct_sum(list(irreps), sum_irrep)
             if multiplicity == 0:
                 continue
             else:
@@ -400,7 +464,7 @@ def find_symmetry_direct_sum(product_iweights: list[tuple], sum_iweight: tuple=N
     return direct_sum, indices
 
 
-def find_plethysms(iweight: tuple, n: int) -> dict[tuple, dict[tuple, int]]:
+def find_plethysms(iweight: IrrepWeight, n: int) -> dict[tuple, dict[tuple, int]]:
     """Decomposes a direct product of n factors of an irrep (iweight)
     into a direct sum of irreps. The decomposition is returned as a dictionary
     whose keys are the direct-sum irreps, and whose values are dictionaries

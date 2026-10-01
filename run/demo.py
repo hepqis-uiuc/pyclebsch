@@ -1,10 +1,10 @@
-import pyclebsch.su_n_operators as ops
 import pyclebsch.cgc as cgc
+import pyclebsch.su_n_operators as ops
 
 # i-weights for "3", "3bar", and "8" in SU(3)
-irrep_3 = (1,0,0)
-irrep_3bar = (1,1,0)
-irrep_8 = (2,1,0)
+irrep_3 = (1, 0, 0)
+irrep_3bar = (1, 1, 0)
+irrep_8 = (2, 1, 0)
 
 """
 EXAMPLES FOR pyclebsch.su_n_operators
@@ -15,8 +15,10 @@ print(ops.calc_dimension(irrep_8))
 
 # GT-patterns which label basis states of SU(N) irrep
 for gt in ops.find_gt_patterns(irrep_8):
-    print(gt, ops.calc_weight(gt, 'z')) # GT-pattern with generalized Jz eigenvalues
-    print(f"{ops.ladder_op([gt], 1, '+')}\n") # GT-pattern raised with 1st generalized raising (ladder) operator
+    print(gt, ops.calc_weight(gt, "z"))  # GT-pattern with generalized Jz eigenvalues
+    print(
+        f"{ops.ladder_op([gt], 1, '+')}\n"
+    )  # GT-pattern raised with 1st generalized raising (ladder) operator
 
 # Find su(N) algebra basis (generators of SU(N) group elements)
 for T in ops.find_suN_basis(irrep_8):
@@ -44,11 +46,12 @@ print(f"{ops.find_plethysms(irrep_8, 3)}\n")
 
 """
 EXAMPLES FOR pyclebsch.cgc
-(THIS WILL CAUSE WRITES TO YOUR FILE SYSTEM
-IN A FOLDER CALLED CGC_Data WHICH IS IN THE PARENT FOLDER OF pyclebsch)
+(COMPUTED CGCS ARE CACHED IN MEMORY ONLY. TO ALSO KEEP THEM ON DISK ACROSS
+RUNS, CALL pyclebsch.cgc.set_cache_dir() WITH A DIRECTORY FIRST.)
 """
+# cgc.set_cache_dir("./cgc-cache")
 
-# This is the dictionary of the CGC data, and it is written into the file system
+# This is the dictionary of the CGC data
 # All calculations are done where the CGCs are in an irrep of the symmetric group
 cgc_dict = cgc.calc_cgcs([irrep_8, irrep_8])
 
