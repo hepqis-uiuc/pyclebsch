@@ -182,7 +182,7 @@ def young_symmetrizer(tableaux: list[YoungTableau], idx_list: list[list]) -> Gen
             # permutations appear in a Young symmetrizer.
             # ~Theorem 5
 
-            num = 2*M + 4
+            num = 2*M + 3
             if is_row_ordered:
                 if M%2==0:
                     ancestor_col_row_perms = [ancestor_perms[i][1] if i%2==0 else ancestor_perms[i][0] for i in range(M)]
