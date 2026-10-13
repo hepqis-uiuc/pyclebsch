@@ -1,0 +1,36 @@
+#+title: Disk cache backend issue
+
+**** Background
+pyclebsch computes SU(N) Clebsch-Gordan coefficient (CGC) tables and caches them. The lattice code requests the same tables thousands of times, and downstream projects rerun similar workloads across many lattice geometries and irrep truncations.
+
+There is an in-memory cache, and an optional disk cache that is used only when the user names a directory (=set_cache_dir(path)= or the =PYCLEBSCH_CACHE_DIR= environment variable). The disk cache exists so that expensive tables survive across processes. The most expensive single table timed so far, the singlet of 3 ⊗ 3̄ ⊗ 8 ⊗ 8 ⊗ 6 ⊗ 6̄, took 47 s to compute in a Linux container. The implementation, including the on-disk layout, entry format and validation, is in =pyclebsch/cache.py=, and its tests are in =tests/=.
+
+**** The issue
+*Disk entries are stored with =pickle=, and loading one can run arbitrary code.*
+- =pickle.load= executes whatever the file instructs (see the warning at the top of the Python documentation for the =pickle= module). A cache directory is therefore exactly as trusted as the code itself: anyone who can write a file into it can run code in every process that later reads it.
+- This happens through ordinary use. A user commits a cache directory and collaborators clone it, or a cache sits on a shared cluster filesystem, or someone copies a colleague's cache to skip a long computation.
+- Checks that run after loading, such as comparing a stored header with the requested key, cannot help. By the time they run, the code has already executed.
+
+*Constraint: performance must not degrade.* The disk cache exists only to save time, and pickle is fast. A safer format that makes reads or writes noticeably slower defeats its purpose.
+
+**** Task
+Formulate an implementation plan for replacing pickle in pyclebsch's disk cache with a storage format (and, if warranted, a layout) whose loader cannot execute code from the file, without degrading performance. Specifically:
+1. Read =pyclebsch/cache.py= and its tests. List the guarantees the current disk cache provides, for example:
+   - how entries are validated;
+   - how writes stay safe when several processes write at once;
+   - how corrupt entries are recovered from;
+   - how its settings reach worker processes.
+   The replacement must keep every one of them.
+2. Before evaluating any candidate, write down measurable success criteria for "performance must not degrade": the workloads, metrics, number of repetitions, and how run-to-run noise is handled. Then measure the current pickle backend against them on the same machine that will measure the candidates, and say where it was measured. At a minimum, cover:
+   - read and write time per entry, for entry sizes from the smallest tables up to the six-irrep singlet above;
+   - a realistic lattice workload (for example, the site factors of one plaquette of a 2×2×2 periodic lattice with T-truncation cutoff 1), with an empty and with a populated disk cache, serial and parallel, under both the =fork= and =spawn= start methods;
+   - on-disk size.
+3. Propose two or three candidate backends with pros and cons. Judge each against the performance criteria, and also against:
+   - no code execution on load: a malformed or hostile file is rejected and recomputed, and never runs code or crashes the run;
+   - exact round-trip of every key and coefficient, bit for bit, including the type of the stored numbers. Check whether they are Python =float= or =numpy.float64= today, and whether any caller depends on that;
+   - safety when concurrent =multiprocessing= workers write the same entry;
+   - behavior on network filesystems such as NFS, where file locking can be unreliable;
+   - new dependencies;
+   - how easy an entry is to inspect or delete by hand;
+   - migration: the new code must never load an entry in the pickle format.
+4. Recommend one candidate, with red/green tests fixed before implementation, the order of work, and acceptance criteria. Write the plan to a new =disk-cache-backend-implementation-plan.org= in the pyclebsch project root. Make no other persistent changes to the pyclebsch codebase; exploratory benchmark scripts belong in a scratch directory outside the repository.
