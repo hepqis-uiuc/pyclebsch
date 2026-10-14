@@ -1,0 +1,252 @@
+#+title: Disk cache backend migration plan
+#+date: 2026-10-13
+
+* Status
+Draft for review. Nothing in the pyclebsch codebase has been changed; the benchmark and prototype scripts behind the numbers below live outside the repository (see [[*Appendix A: how the numbers were produced]]).
+
+*One decision is needed before implementation* ([[*Decision needed]]): the recommended format meets every requirement except one pre-registered performance criterion. Reads of small entries are 9 to 10 µs slower than pickle (1.4 to 1.8 times), measured in a Linux container.
+
+* What this document is
+The disk tier of pyclebsch's CGC cache stores each table as a pickle file, and loading a pickle can run arbitrary code (=disk-cache-issue-report.org=). This plan proposes a replacement storage format whose loader cannot execute code from the file, and records the evidence for it:
+1. the guarantees of the current disk cache that the replacement must keep;
+2. performance criteria, fixed before any measurement, and the measured baseline;
+3. three candidate backends, prototyped and measured against those criteria and against the safety and compatibility requirements;
+4. a recommendation, red/green tests fixed before implementation, the order of work and acceptance criteria.
+
+Terms used below:
+- /table/: a =CGCTable=, =dict[int, dict[tuple[int, ...], float]]=, mapping a sum-irrep state index (or, for highest-weight tables, a multiplicity copy index starting at 1) to the nonzero coefficients of that state, keyed by product state (a tuple of one state index per factor of the product).
+- /key/: a =CacheKey= (kind, product, sum irrep, multiplicity index, =EPS=).
+- /entry/: one file in the disk tier, holding one table plus metadata.
+- /envelope/: the metadata around the table: format version, CGC convention version, key, and provenance (pyclebsch version and commit).
+
+* 1. Guarantees of the current disk cache
+Read from =pyclebsch/cache.py= and =tests/=. G1, G2, G9 and G10 do not involve the file format; the migration touches only =_read_disk=, =_write_disk=, the entry file name and the format constants. G3 to G8 must be re-established for the new format.
+
+| #   | Guarantee                                                                                                                                                                                                                                                                                                                                                                         | Pinned by                                                                                                                                                                  |
+|-----+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| G1  | Opt-in, no default location: on only via =set_cache_dir(path)= or a non-empty =PYCLEBSCH_CACHE_DIR=; =set_cache_dir("")= raises =ValueError= and changes nothing; nothing is written by default.                                                                                                                                                                                   | =test_env_var_enables_disk_cache=, =test_empty_env_var_disables_disk_cache=, =test_set_cache_dir_requires_explicit_path=, =test_nothing_written_by_default=                   |
+| G2  | The path is resolved when set: =~= expanded, relative paths made absolute, so a later =chdir= does not move the cache.                                                                                                                                                                                                                                                              | =test_set_cache_dir_resolves_relative_path=, =test_cache_dir_expands_home=                                                                                                    |
+| G3  | Layout: =<dir>/v<CGC_CACHE_VERSION>/<str(list(product))>/<highest_weight_CGC_(...) or lower_weight_CGC_(...)>=; a name over 200 bytes becomes =sha256-<hex digest>=. Entries outside =v<CGC_CACHE_VERSION>/= (older conventions, pyclebsch ≤ 0.1) are never read.                                                                                                                    | =test_disk_entries_written_under_version_namespace=, =test_legacy_layout_entries_are_ignored=, =test_previous_version_entries_are_ignored=, =test_long_product_uses_hashed_name= |
+| G4  | Validation on read: the envelope must be a dict with =data=; =format_version= must equal =CACHE_FORMAT_VERSION=, =cgc_cache_version= must equal =CGC_CACHE_VERSION=, and the stored key must equal the requested key, field by field (=EPS= is not in the path, so the key check is what catches an =EPS= change). Provenance fields are recorded but never checked.          | =test_format_version_mismatch_is_rejected=, =test_entry_with_mismatched_key_is_rejected=, =test_eps_change_invalidates=, =test_disk_entry_header_records_provenance=          |
+| G5  | Recovery: an entry that fails to unpickle (a listed set of exception types) or fails G4 is reported with a =CGCCacheWarning=, deleted, counted in =disk_rejected=, recomputed and rewritten. A missing file is a plain miss. Other =OSError= subclasses (e.g. =PermissionError=) propagate to the caller.                                                                     | =test_corrupt_entry_is_recovered= (empty, truncated) and the G4 tests                                                                                                       |
+| G6  | Atomic writes: the entry is written to a temporary file (prefix =.tmp-=) in the target directory and moved into place with =os.replace=, so a reader sees no file or a complete one. If anything fails, the temporary file is removed and the exception propagates. Concurrent writers of one entry each write their own temporary file; the last rename wins. No locks are used. | =test_failed_write_leaves_no_partial_file=, =test_parallel_cold_disk_run_completes= (fork, 2×2×2 lattice)                                                                    |
+| G7  | Exactness: a table read from disk equals the one computed (maximum difference 0). Not pinned by any test, but true of pickle: the coefficient type (=numpy.float64=, see section 5) and the order of keys at both levels.                                                                                                                                                           | =test_disk_entry_used_after_memory_clear=                                                                                                                                   |
+| G8  | The envelope layout (field names and value types, down to the table entries) is pinned per =CACHE_FORMAT_VERSION=; changing it without a version bump fails a test.                                                                                                                                                                                                                | =test_cache_format_version_match= (=tests/test_cgc_golden.py=)                                                                                                              |
+| G9  | Interaction with the memory tier: a disk hit is stored in memory; =set_cache_dir= clears memory; counters =disk_hits=, =disk_writes=, =disk_rejected= are kept per process.                                                                                                                                                                                                           | =test_memory_tier_computes_each_entry_once=, =test_set_cache_dir_clears_memory=                                                                                            |
+| G10 | Settings reach workers: =set_cache_dir= writes =PYCLEBSCH_CACHE_DIR=, which spawn and forkserver workers read at import; fork workers inherit the setting; =pool_kwargs()= passes directory and memory cap to a =Pool= initializer, and pyclebsch's own site-factor =Pool= uses it. A user's forkserver =Pool= created before =set_cache_dir= sees the stale setting (documented). | =tests/test_cache_multiprocessing.py= (4 tests), =test_set_cache_dir_updates_env_var=                                                                                        |
+
+* 2. Performance criteria
+Written down before any benchmark was run, and not changed afterwards.
+
+** Workloads
+- *W1, per entry.* Read time (path to a validated table identical to what was written, coefficient type included) and write time (table to a file renamed into place) for six real tables:
+  | Case                                       | Coefficients | Sum states |
+  |--------------------------------------------+--------------+------------|
+  | L3 smallest                                |            1 |          1 |
+  | L3 median                                  |           30 |          1 |
+  | L3 largest                                 |          399 |          6 |
+  | 8 ⊗ 8 → 8, copy 1, lower weight            |           42 |          8 |
+  | 3 ⊗ 3̄ ⊗ 8 ⊗ 8 ⊗ 6 ⊗ 6̄ → 1, copy 1, lower   |        1,066 |          1 |
+  | 3 ⊗ 3̄ ⊗ 8 ⊗ 8 ⊗ 6 ⊗ 6̄ → 1, highest weight |       22,834 |         20 |
+  "L3" is the set of 46 tables that the W2 workload writes. Page cache warm (dropping caches needs root).
+- *W2, end to end.* Site factors of plaquette 0 of the 2×2×2 lattice, periodic in every direction, T truncation cutoff 1 (=calc_plaquette_site_factors=, as in =tests/test_cache_multiprocessing.py=), in a fresh process; wall time of that call only. Matrix: {empty, populated} disk cache × {serial, parallel under =fork=, parallel under =spawn=}. A serial run does not depend on the start method, so it is run once per cache state.
+- *W3, on-disk size.* Bytes and allocated KiB (=du=) of every entry W2 writes, plus the bytes of the two six-irrep entries.
+
+** Repetitions and noise
+- W1: =timeit=, 7 repeats, each at least 0.2 s long; statistic = minimum over repeats (least affected by scheduler noise), median reported as a cross-check. The whole of W1 runs in 5 rounds with the backends interleaved and rotated within each round, so slow drift of the machine affects every backend alike.
+- W2: 5 fresh processes per (backend, configuration), interleaved across backends; statistic = median.
+- Noise band: an A/A comparison of pickle against itself (a second copy of the pickle backend, interleaved like any candidate). For each workload, =tol= is the largest |ratio − 1| between the two copies over the rounds.
+
+** Pass and fail
+- A candidate *passes* a workload if the median over rounds of (candidate time ÷ pickle time in the same round) is at most 1 + =tol=, and *fails* it otherwise.
+- The performance requirement is met only if every W1 read, every W1 write and every W2 configuration passes.
+- On-disk size is reported, not pass/fail, unless it exceeds twice pickle's. The factor 2 is a round number chosen in advance to mean "clearly larger", not derived from any cost; above it, the cost is raised with the user.
+
+** Measurement environment
+Every number in this document was measured in one place: a Linux container (aarch64, 10 CPUs, 15 GiB RAM) on an Apple-silicon host, CPython 3.12.12, NumPy 2.4.1, with cache directories on the container's local overlay filesystem. Absolute times will differ on other machines; ratios between backends should move less, but that is an expectation, not a measurement.
+
+* 3. Baseline: the current pickle backend
+- W1 (milliseconds, median over 5 rounds of the minimum over 7 repeats):
+  | Case                    |   Read |  Write |
+  |-------------------------+--------+--------|
+  | L3 smallest             |  0.014 |  0.080 |
+  | L3 median               |  0.020 |  0.098 |
+  | L3 largest              |  0.086 |  0.375 |
+  | 8 ⊗ 8 → 8 lower         |  0.022 |  0.100 |
+  | six-irrep singlet lower |  0.232 |  0.933 |
+  | six-irrep singlet high  |  4.069 | 17.656 |
+- W2 (seconds, median of 5):
+  | Cache     | Serial | Fork (5 workers) | Spawn (5 workers) |
+  |-----------+--------+------------------+-------------------|
+  | empty     |  1.262 |            0.616 |             1.042 |
+  | populated |  0.890 |            0.232 |             0.686 |
+- W3: the 46 entries take 87,301 bytes (272 KiB allocated); the six-irrep highest-weight entry is 559,900 bytes, the lower-weight one 36,587 bytes.
+- The issue report quotes 47 s to compute the six-irrep singlet. In this container, =calc_cgcs(product, (0, 0, 0), 1, 0)= took 2.0 s from an empty cache, and that call computes the full highest-weight table (all 20 copies). The cause of the difference was not investigated; it does not affect the per-entry measurements.
+- For scale: computing the L3 median table (lower weight, 30 coefficients) from its highest-weight table, already in memory, takes 0.02 ms, about the same as reading it from disk with pickle. The L3 largest (highest weight, 399 coefficients) takes 21 ms to compute. A disk hit on a lower-weight table also spares the computation of the highest-weight table it is derived from, so the saving from the disk tier is larger than the first figure alone suggests.
+
+* 4. Candidates
+** Design shared by all candidates
+These choices are independent of the encoding, so the comparison below is about the encoding (and, for SQLite, the layout).
+- *New file names.* Each entry keeps its directory and name and gains a suffix (=.cgc= for the recommended format). The suffix is appended after the 200-byte hashing rule of G3, so a name is at most 204 bytes. The new code computes only suffixed paths, so it never opens, reads or deletes a pickle entry. Old pickle entries remain on disk, unused, and pyclebsch versions that still use pickle keep finding them: a cache directory shared by an old and a new version does not thrash, with each version deleting the other's entries as malformed.
+- =CACHE_FORMAT_VERSION= becomes 2. Future format changes keep the G4 mechanism: a mismatching version is rejected, deleted and recomputed.
+- The atomic write of G6 is unchanged.
+- The rejection path of G5 is unchanged, but the list of exception types caught becomes the decoder's: =ValueError= (which includes =json.JSONDecodeError= and =UnicodeDecodeError=), =TypeError=, =KeyError=, =IndexError=, =OverflowError= and =RecursionError=. =RecursionError= matters: =json.loads= of deeply nested brackets raises it, and the prototypes reject such a file only because they catch it.
+- *Structural validation.* Before a table is returned, the decoder checks: the envelope versions and the key (G4); integer types; that every product state has one index per factor, each index =0 ≤ i < dim(irrep)=; that sum-state indices are unique and in range (0 ≤ s < dim(sum irrep) for lower-weight tables, s ≥ 1 for highest-weight tables); that row counts add up; that every coefficient is finite. These checks are why a returned table cannot make later pyclebsch code fail with an exception (for example, an out-of-range index would make =_compute_lower_weight_cgcs= fail with =IndexError=). Pickle performed none of them.
+- Coefficients are returned as =numpy.float64=, as today (section 5).
+
+** A. JSON, one file per entry
+The envelope as one JSON object; the table as a list of =[sum state, [product states], [coefficients]]= groups, since JSON object keys cannot be tuples. Encoded with =allow_nan=False=, decoded with a =parse_constant= that rejects =NaN= and =Infinity=; every element is type-checked in Python and every coefficient converted to =numpy.float64=. Python's float repr is the shortest string that reads back to the same double, so finite coefficients round-trip exactly [Gay 1990; Python 3.1 "What's New"].
+- Pros: standard library only; human-readable (=python -m json.tool=, =jq=); writes up to 23 % faster than pickle (5 % slower, within noise, for the smallest entry); files about the same size as pickle (93,156 bytes for the 46 L3 entries, 1.07×).
+- Cons: reads 1.3 to 4.9 times slower than pickle (the six-irrep table: 20.1 ms against 4.1 ms), because validation and conversion run element by element in Python. Pitfalls a decoder must handle: =RecursionError= on deep nesting, and Python's integer-string length limit, which makes a 5,000-digit integer raise =ValueError= [Python docs, "Integer string conversion length limitation"].
+
+** B. Binary arrays with a JSON header, one file per entry (recommended)
+#+begin_example
+pyclebsch-cgc-table\n                           magic line
+{"format_version":2,"cgc_cache_version":1,      header: one line of ASCII JSON
+ "key":{...},"pyclebsch_version":...,
+ "pyclebsch_commit":...,"shape":{"states":S,"rows":N}}\n
+int32 little-endian  states[S]                  sum-state indices, in table order
+int32 little-endian  counts[S]                  coefficients per sum state
+int32 little-endian  product_states[N × k]      k = number of factors in the product
+float64 little-endian values[N]                 IEEE 754 binary64, bit for bit
+#+end_example
+The decoder checks the magic line, parses the header (at most 64 KiB) and applies G4, then checks that the payload length equals exactly what =shape= implies. Only then does it call =numpy.frombuffer=, on the int32 and float64 blocks. It then applies the structural checks, mostly as single vectorized operations: viewing indices as unsigned makes a negative index a huge value, so one comparison checks 0 ≤ i < dim. Finally it builds the dicts. =numpy.frombuffer= interprets bytes as numbers and nothing else, so no input can make it execute code. Iterating the float64 array yields =numpy.float64= scalars with the stored bits.
+- Pros: no new dependency (NumPy is already one); exact by construction, since the coefficient bytes are copied, not converted; reads of large tables 4 to 21 % faster than pickle and writes up to 2.3 times faster; all W2 configurations pass; =head -2 <entry>= shows the whole envelope as text, and an entry is deleted like any file.
+- Cons: reads of small tables are 9 to 10 µs slower than pickle (1.4 to 1.8 times), which fails the W1 criterion (table below). The coefficients themselves cannot be read without a few lines of Python. Indices are limited to int32, reached only by an irrep of dimension above 2^31, far beyond anything pyclebsch can compute; the writer's =numpy.fromiter= call fails with =OverflowError= instead of writing a wrong entry.
+- Prototype history, reported because the criterion was not moved. The first decoder (int64 indices, several NumPy calls on tiny arrays) read small tables 2 to 2.4 times slower than pickle. Profiling showed that most of the fixed cost was per-call NumPy overhead, and a leaner decoder (one =tolist()= over one integer block, one range comparison, tuples built with =zip(*[iter(flat)] * k)=, cached irrep dimensions) gave the numbers below. With int64 indices the six-irrep entry was 1,279,307 bytes, 2.28 times pickle's and over the size threshold. int32 indices bring it to 731,131 bytes (1.31×) at the same read speed.
+- Variant B′ replaces the JSON header with a fixed binary prefix (versions, shape, lengths) and compares the stored key with the expected key's canonical JSON bytes instead of parsing it. It reads small tables 3 to 4 µs faster than B but is still 1.26 to 1.51 times slower than pickle on them. In exchange, the envelope is partly binary, and a second encoding of the key must stay byte-identical between writer and reader. Not recommended: it does not close the gap, and B is simpler.
+
+** C. SQLite, one database per cache directory
+One file =v<CGC_CACHE_VERSION>/entries.sqlite3=, table =entries(name TEXT PRIMARY KEY, body BLOB)=, the body being format B's bytes, so only the layout differs from B. Standard library (=sqlite3=), default rollback journal, one connection per process, opened after any fork.
+- Pros: one file instead of thousands; no new dependency.
+- Cons: writes of small entries are 4 to 5.7 times slower than pickle, because each commit is synced to disk; the empty-cache fork configuration of W2 fails (1.12×, tolerance 1.1 %). SQLite's concurrency rests on POSIX advisory file locks, which SQLite's documentation lists as broken on many network filesystems, risking corruption of the whole database rather than of one entry; WAL mode, which would avoid some locking, does not work on network filesystems at all [SQLite, "How To Corrupt An SQLite Database File"; SQLite, "Write-Ahead Logging"]. An open connection must not be carried across =fork()= (same source), which adds per-process bookkeeping to pyclebsch's fork workers. Inspecting or deleting one entry needs the =sqlite3= tool and SQL.
+
+** Considered and excluded without measurement
+- *pickle with a restricted =Unpickler.find_class=* [Python docs, pickle, "Restricting Globals"]: the files would still be pickles, and the issue requires that the new code never load the pickle format. Storing =numpy.float64= would also require allowing NumPy's scalar reconstructor, leaving safety dependent on an allow-list of NumPy internals.
+- *marshal*: "not intended to be secure against erroneous or maliciously constructed data" [Python docs, marshal], and it cannot represent =numpy.float64=.
+- *msgpack*: a new dependency, and it needs extension types for tuples and =numpy.float64=. The dominant read cost for large tables is building Python dicts, tuples and scalars, which any format pays, and B already beats pickle there. Not measured.
+- *NumPy =.npz= with =allow_pickle=False=*: safe [NumPy, =numpy.load=], but a zip container with one header per member adds fixed per-entry cost, exactly where B is already over budget. Not measured.
+
+** Comparison
+Measured as in section 2. W1 ratios are candidate ÷ pickle (median over rounds); "fails" means over 1 + =tol=. JSON and SQLite were measured in the first W1 run, B in the second; pickle's own times agreed between the two runs to within 0.002 ms on reads (smallest) and 1 % (six-irrep table). The int32 version of B was checked with the same decoder in a single spot run (7 repeats): read times were within 0.5 µs of the int64 version for small tables and 6 % faster on the six-irrep table. The full W1 protocol is rerun on the implementation (acceptance criterion 4).
+
+| Criterion                                | A. JSON                                      | B. Binary + JSON header                                                 | C. SQLite                                             |
+|------------------------------------------+----------------------------------------------+-------------------------------------------------------------------------+-------------------------------------------------------|
+| W1 read, small tables (1 to 42 coeff.)   | 1.3 to 2.2×, fails                           | 1.4 to 1.8× (+9 to 10 µs), fails                                        | 2.1 to 2.6×, fails                                    |
+| W1 read, large (399 to 22,834 coeff.)    | 4.1 to 4.9×, fails                           | 0.79 to 0.96×, passes                                                   | 1.03 to 1.29×, fails                                  |
+| W1 write                                 | 0.77 to 1.05×, passes                        | 0.44 to 1.05×; passes except L3 smallest by the minimum statistic (1.05 against tol 0.018; passes by the median) | 0.53 to 5.65×, fails on small entries  |
+| W2, all six configurations               | passes                                       | passes                                                                  | fails empty/fork (1.12×)                              |
+| W3 size, 46 L3 entries / six-irrep entry | 1.07× / 1.43×                                | 1.01× / 1.31× (int32)                                                   | 2.06× / not measured                                  |
+| No code execution on load                | yes: 19 malformed and hostile variants rejected | yes: 15 variants rejected (both decoders)                            | yes (decodes format B)                                |
+| Exact round trip incl. type              | yes, 48 of 48 tables                         | yes, 48 of 48 tables                                                    | yes, 48 of 48 tables                                  |
+| Concurrent writers                       | G6 unchanged                                 | G6 unchanged                                                            | database locks; busy timeout                          |
+| Network filesystems                      | rename-based, no locks                       | rename-based, no locks                                                  | relies on locks the SQLite docs call unreliable there |
+| New dependencies                         | none                                         | none                                                                    | none                                                  |
+| Inspect / delete by hand                 | any text tool / =rm=                         | =head -2= for envelope; Python for values / =rm=                         | =sqlite3= and SQL                                     |
+| Migration (never load pickle)            | suffix; pickle files never opened            | suffix; pickle files never opened                                       | separate file; pickle files never opened              |
+
+"No code execution" was tested by writing each variant to the entry path and reading it. The variants: empty, truncated, random bytes, trailing junk, a pickle whose =__reduce__= runs =os.system= to create a marker file, and format-specific damage: deep nesting, =NaN=, strings or booleans or floats where integers belong, out-of-range and negative indices, wrong arity, a 5,000-digit integer, a declared shape of 10^15 rows, a negative count, a header without a newline, wrong key, wrong format version. Every variant was rejected with a =CGCCacheWarning= and deleted; no exception escaped; the marker file was never created.
+
+In W2, all 300 runs, across every backend and configuration, produced the same 4,018 site factors with the same checksum, and none rejected an entry. That includes the empty-cache parallel runs, where five workers write overlapping entries concurrently.
+
+On network filesystems: NFS performs RENAME as one server operation [RFC 1813; RFC 7530], and per-entry files never lock, so unreliable locking does not affect A or B. Two weaker effects remain, the same as for today's pickle files. A client's attribute and lookup caches can hide a just-written entry for a while, which costs a recomputation and nothing else. A reader whose file handle refers to an entry that another client has just replaced can get =OSError= with =errno.ESTALE=, which G5 does not catch, so the run stops. That gap predates this migration; see section 10.
+
+The SQLite and NFS documents above are cited from memory: the sandbox firewall blocked fetching them while this plan was written, so their wording was not re-checked.
+
+* 5. The type of the stored coefficients
+- Today every coefficient is a =numpy.float64=, whether computed or read from disk: =vecs[a][i]= in =_compute_highest_weight_cgcs= and =child_cgcs[basis_idx]= in =_compute_lower_weight_cgcs= index NumPy arrays, and pickle preserves the type. Checked on all 318 coefficients of the 3 ⊗ 3̄ and 8 ⊗ 8 tables and on all 48 benchmark tables. Keys are plain =int= at both levels; product states are tuples of plain =int=.
+- No code in this repository depends on =numpy.float64= specifically. Tests assert =isinstance(value, float)=, true for both types (=numpy.float64= subclasses =float=); =irreps_and_singlets= applies =np.sign= to coefficients, which returns =numpy.float64= for either type; the matrix-element code multiplies coefficients by =np.sqrt(...)=, which yields =numpy.float64= either way. Downstream projects were not inspected.
+- What would change for a caller if the type became =float=: =repr= (=0.5= instead of =np.float64(0.5)=), =type(x) is ...= checks, and division by zero (=ZeroDivisionError= instead of a =RuntimeWarning= and =inf=).
+- The requirement is an exact round trip including the type, so the new format returns =numpy.float64=; that cost is included in every measurement above. Making =calc_cgcs= return plain =float= throughout would be a separate, user-visible change, and is not proposed here.
+
+* 6. Recommendation
+Candidate B, with int32 indices: binary arrays behind a one-line JSON header, one file per entry with a =.cgc= suffix, =CACHE_FORMAT_VERSION= 2. It cannot execute code from a file, round-trips every table bit for bit including the coefficient type, keeps the rename-based concurrency and its behavior on network filesystems, needs no new dependency, writes faster than pickle, reads large tables faster, and leaves pickle entries untouched. It fails one criterion: reading a small entry costs 9 to 10 µs more than pickle.
+
+** Decision needed
+The pre-registered criteria do not allow this slowdown, and no candidate satisfies them. Two ways forward:
+- *D1 (recommended): accept B, with the per-entry read criterion amended* to "reads of entries below 1,000 coefficients may be up to 15 µs slower than pickle in this container, provided writes, large-entry reads and every W2 configuration pass". 15 µs is a round number above the worst measured excess, 10.3 µs; the A/A spread on these entries was about 1 µs. Why the slowdown is small in practice: on the tables W2 uses it adds at most 0.5 ms to runs of 0.2 to 1.3 s, and W2 detects no difference. For a 30-coefficient lower-weight table, computing it takes about as long as reading it with pickle, so the disk tier saves little there in any format. Where the disk tier does pay off, on large tables, B is faster than pickle.
+- *D2: keep the criteria as written.* The next step would be a second, pure-Python decoding path for small entries, avoiding NumPy calls. Whether that reaches parity is unknown: opening and reading the file alone takes about 5 µs of pickle's 13 µs total for the smallest entry, and parsing the JSON header 2.6 µs. It would add roughly 30 lines and a size threshold to choose between the paths, and both paths would need tests. If parity is not reached, the remaining choice is between the status quo and a slowdown.
+
+The tests, order of work and acceptance criteria below assume D1. Under D2, a step to build and measure the small-entry path would come between steps 2 and 3, and acceptance criterion 4 would keep the original W1 read criterion.
+
+* 7. Red/green tests (fixed before implementation)
+"Red" tests fail on the current code for the reason stated and must pass afterwards. "Guard" tests pass today and must keep passing; they pin behavior that pickle gives for free and the new format must reproduce. All live in =tests/test_cgc_cache.py= unless stated.
+
+| Test                                                           | Kind  | Asserts                                                                                                                                                                                                                                                                                                                          | Red today because                                                                                   |
+|----------------------------------------------------------------+-------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------------------------------|
+| =test_planted_pickle_never_executes=                           | red   | A pickle whose =__reduce__= creates a marker file, placed both at the new entry path (with suffix) and at the old suffix-less path: =calc_cgcs= returns correct values, warns once (for the suffixed file), replaces the suffixed file with a valid entry, and the marker never appears.                                       | the current code unpickles the suffix-less file, which creates the marker                           |
+| =test_pickle_entries_are_left_alone=                           | red   | A valid format-1 pickle entry at the old path is neither read (=disk_hits= 0, =computed= > 0) nor deleted, and a new entry is written beside it.                                                                                                                                                                                | the current code reads it (=disk_hits= > 0)                                                         |
+| =test_malformed_entry_is_recovered= (parametrized; replaces =test_corrupt_entry_is_recovered=) | red   | Each of these variants (empty, truncated, random bytes, trailing junk, deep nesting in the header, header without newline, declared shape too large or negative, payload length mismatch, negative count, out-of-range index, out-of-range sum state, duplicate sum state, =NaN=, wrong key, wrong format version) is rejected with =CGCCacheWarning=, deleted, recomputed with correct values, and replaced by a valid entry. | the current code never reads the suffixed path, so no warning is issued                              |
+| =test_package_does_not_import_pickle=                          | red   | No module under =pyclebsch/= imports =pickle=, =marshal= or =shelve= (walk the package's source with =ast=).                                                                                                                                                                                                                       | =cache.py= imports =pickle=                                                                          |
+| =test_cache_format_version_match= (=tests/test_cgc_golden.py=)  | red   | Entries written for 3 ⊗ 3̄ → 8 match =ENVELOPE[2]=: magic line, header field names and types (including =shape=), and payload length equal to =4 × (2S + Nk) + 8N= bytes. Decoded by the test itself, independently of =cache.py=.                                                                                               | =CACHE_FORMAT_VERSION= is 1 and =ENVELOPE[2]= does not exist                                         |
+| =test_disk_round_trip_is_exact=                                | guard | Through =CGCCache= with memory cleared, for the 3 ⊗ 3̄, 8 ⊗ 8 and 3 ⊗ 3̄ ⊗ 8 tables and a synthetic table containing =-0.0=, the smallest subnormal, 1/3 and 1e300: same sum-state keys in the same order, same product-state keys in the same order (tuples of =int=), values of type =numpy.float64= with identical bytes (=struct.pack("<d", v)=). | (passes with pickle)                                                                                |
+| =test_failed_write_leaves_no_partial_file=                     | guard | Rewritten to patch =cache.os.replace= (to fail after the temporary file is written) instead of =pickle.dump=: no entry and no temporary file remain, and the error propagates.                                                                                                                                                | (passes with pickle)                                                                                |
+| =test_parallel_cold_disk_run_completes= (=test_cache_multiprocessing.py=) | guard | Parametrized over =fork= and =spawn= (today: =fork= only). Same assertions as now, plus: the run's stderr contains no =CGCCacheWarning=.                                                                                                                                                                                         | (passes with pickle)                                                                                |
+
+Tests that read or write envelopes through the =_load_envelope= / =_dump_envelope= helpers (=test_format_version_mismatch_is_rejected=, =test_entry_with_mismatched_key_is_rejected=, =test_eps_change_invalidates=, =test_corrupt_entry_is_recovered=, =test_disk_entry_header_records_provenance=, =test_legacy_layout_entries_are_ignored=) keep their assertions. Their helpers are rewritten to edit the header line of a new-format entry, except in =test_legacy_layout_entries_are_ignored=, which writes a pickle on purpose. No test outside =test_planted_pickle_never_executes=, =test_pickle_entries_are_left_alone= and =test_legacy_layout_entries_are_ignored= uses =pickle=.
+
+* 8. Order of work
+0. Run the full suite (=uv run -m pytest -v --runslow=) on the current code and record the result.
+1. Add the red and guard tests of section 7. Run them on the current code: each red test must fail for the reason in its row, and each guard must pass. A red test that fails for another reason is fixed before going on.
+2. Implement in =pyclebsch/cache.py=:
+   - module-level =_encode_entry(key, table) -> bytes= and =_decode_entry(raw, key) -> CGCTable=, the latter raising =ValueError= with a reason for any malformed input;
+   - the suffix in =_entry_path=;
+   - =_read_disk= reads the file's bytes and catches the decoder's exception types;
+   - =_write_disk= writes the encoded bytes through the existing atomic path;
+   - =CACHE_FORMAT_VERSION = 2=, a named constant for the 64 KiB header limit, the =pickle= import and =_UNREADABLE_ENTRY_ERRORS= removed, and the module docstring's "Disk entry format" section rewritten.
+   Rewrite the test helpers listed under section 7. Run the full suite: everything passes.
+3. Documentation:
+   - =README.md=: "What is stored" (format, =.cgc= suffix); "Trust", rewritten per section 10; an upgrade note saying that pickle entries from pyclebsch 0.2 are ignored, not deleted, and can be removed with =find "$PYCLEBSCH_CACHE_DIR"/v1 -type f ! -name '*.cgc' -delete=.
+   - =.claude/skills/pyclebsch/SKILL.md=: the caching paragraph.
+4. =uv tool run ruff check= and =uv tool run ty check= on the changed files.
+5. Rerun the W1, W2 and W3 harness (Appendix A) on the implementation against the pickle code of the parent commit, interleaved as before, and compare with the criteria as decided in [[*Decision needed]].
+6. Hand the diff over for review, uncommitted.
+
+* 9. Acceptance criteria
+1. The full suite passes, including =--runslow=.
+2. Every red test of section 7 was seen failing in step 1, for its stated reason, and passes now.
+3. No module of the =pyclebsch= package imports =pickle=, =marshal= or =shelve=.
+4. Performance (step 5), under D1: every W1 write and every W2 configuration passes the pre-registered rule; W1 reads of the two six-irrep entries and of the L3 largest pass it; W1 reads of the smaller entries are at most 15 µs slower than pickle. The six-irrep entry is at most twice pickle's size.
+5. =ruff= and =ty= report no new findings in the changed files.
+6. README and SKILL.md describe the new format and the remaining trust caveat.
+
+* 10. Limitations that remain
+- *Poisoning is still possible.* The new loader cannot run code, but a well-formed entry with wrong coefficients is served as if it were correct: no structural check can tell a wrong coefficient from a right one. Anyone who can write into a cache directory can still change results silently. The README's "Trust" paragraph should say exactly this, in place of the code-execution warning: share a cache directory only with people you would trust with the results, and prefer read-only sharing.
+- *Resource use.* An entry is read into memory whole, as with pickle; a huge file in the cache directory costs that much memory. Someone with write access could equally fill the disk, so this is not addressed.
+- *=ESTALE= on network filesystems* (section 4) stops a run, as it does today with pickle, instead of causing a recomputation. Treating =OSError= with =errno.ESTALE= as a miss would be a separate small change.
+- *Old pickle files stay on disk* until the user deletes them (step 3 gives the command).
+
+* References
+- Python documentation, =pickle=: the warning at the top of the page, and the section "Restricting Globals". https://docs.python.org/3/library/pickle.html
+- Python documentation, =marshal=: the warning at the top of the page. https://docs.python.org/3/library/marshal.html
+- Python documentation, =json=: =parse_constant=, and "Infinite and NaN Number Values". https://docs.python.org/3/library/json.html
+- Python documentation, built-in types, "Integer string conversion length limitation" (introduced for CVE-2020-10735). https://docs.python.org/3/library/stdtypes.html
+- Python documentation, =os.replace=: the rename is atomic when it succeeds (a POSIX requirement). https://docs.python.org/3/library/os.html#os.replace
+- IEEE Std 1003.1-2017 (POSIX), =rename()=.
+- D. M. Gay, "Correctly rounded binary-decimal and decimal-binary conversions", AT&T Bell Laboratories Numerical Analysis Manuscript 90-10 (1990). The algorithm behind Python's shortest round-tripping float repr (Python 3.1, "What's New": "repr() of a float x is shorter in many cases").
+- IEEE Std 754-2019, binary64 format.
+- NumPy documentation, =numpy.load= (=allow_pickle= defaults to =False= since NumPy 1.16.3) and =numpy.frombuffer=.
+- SQLite, "How To Corrupt An SQLite Database File", sections on file-locking problems (including network filesystems) and on carrying an open connection across =fork()=. https://www.sqlite.org/howtocorrupt.html
+- SQLite, "Write-Ahead Logging": WAL does not work over a network filesystem. https://www.sqlite.org/wal.html
+- B. Callaghan, B. Pawlowski, P. Staubach, "NFS Version 3 Protocol Specification", RFC 1813 (1995), RENAME procedure.
+- T. Haynes, D. Noveck (eds.), "Network File System (NFS) Version 4 Protocol", RFC 7530 (2015), RENAME operation and the file-caching sections.
+
+* Appendix A: how the numbers were produced
+The prototypes and scripts are in a session scratch directory outside the repository and may not survive; this description is enough to rebuild them.
+- *Prototypes* (=backends.py=). Each backend replaces =CGCCache._entry_path=, =_read_disk= and =_write_disk= by monkeypatching. The backend is chosen from an environment variable at import, so spawn workers, which re-import the main module, use the same backend as their parent. The pickle backend is the shipped code, unpatched, installed under two names for the A/A comparison.
+- *Tables.* Generated by running the shipped code with a scratch cache directory: the 2×2×2 site-factor workload (46 entries), =calc_cgcs([(2,1,0),(2,1,0)], (2,1,0), 1)=, and =calc_cgcs([(1,0,0),(1,1,0),(2,1,0),(2,1,0),(2,0,0),(2,2,0)], (0,0,0), 1, 0)=.
+- *Round trip.* Every table written and read back through each backend: same keys in the same order, same types, same bytes per coefficient.
+- *Hostile files.* Each variant written to the entry path and read through =CGCCache._read_disk=, checking for a warning, deletion, no escaping exception, and no marker file.
+- *W1.* =timeit= over =_write_disk= and =_read_disk= on a =CGCCache= instance, per section 2.
+- *W2.* One subprocess per measurement, running the site-factor call under the chosen start method with =parallelize= on or off. For "populated", the directory was filled beforehand by one serial run of the same backend. Each process prints wall time, cache counters, the number of site factors and the sum of their absolute values.
+
+* Appendix B: W1 results for the recommended format (int64-index prototype; see section 4)
+Milliseconds, median over 5 rounds of the minimum over 7 repeats; ratio = median over rounds of (B ÷ pickle).
+| Case                    | Read: pickle | Read: B | Ratio | tol   | Write: pickle | Write: B | Ratio | tol   |
+|-------------------------+--------------+---------+-------+-------+---------------+----------+-------+-------|
+| L3 smallest             |        0.014 |   0.024 |  1.77 | 0.014 |         0.080 |    0.083 |  1.05 | 0.018 |
+| L3 median               |        0.020 |   0.030 |  1.47 | 0.051 |         0.098 |    0.091 |  0.93 | 0.095 |
+| L3 largest              |        0.086 |   0.083 |  0.96 | 0.010 |         0.375 |    0.206 |  0.55 | 0.036 |
+| 8 ⊗ 8 → 8 lower         |        0.022 |   0.031 |  1.42 | 0.035 |         0.100 |    0.090 |  0.90 | 0.067 |
+| six-irrep singlet lower |        0.232 |   0.181 |  0.79 | 0.025 |         0.933 |    0.423 |  0.45 | 0.029 |
+| six-irrep singlet high  |        4.069 |   3.626 |  0.88 | 0.020 |        17.656 |    7.663 |  0.44 | 0.024 |

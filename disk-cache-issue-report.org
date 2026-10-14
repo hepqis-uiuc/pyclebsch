@@ -1,11 +1,11 @@
 #+title: Disk cache backend issue
 
-**** Background
+* Background
 pyclebsch computes SU(N) Clebsch-Gordan coefficient (CGC) tables and caches them. The lattice code requests the same tables thousands of times, and downstream projects rerun similar workloads across many lattice geometries and irrep truncations.
 
 There is an in-memory cache, and an optional disk cache that is used only when the user names a directory (=set_cache_dir(path)= or the =PYCLEBSCH_CACHE_DIR= environment variable). The disk cache exists so that expensive tables survive across processes. The most expensive single table timed so far, the singlet of 3 ⊗ 3̄ ⊗ 8 ⊗ 8 ⊗ 6 ⊗ 6̄, took 47 s to compute in a Linux container. The implementation, including the on-disk layout, entry format and validation, is in =pyclebsch/cache.py=, and its tests are in =tests/=.
 
-**** The issue
+* The issue
 *Disk entries are stored with =pickle=, and loading one can run arbitrary code.*
 - =pickle.load= executes whatever the file instructs (see the warning at the top of the Python documentation for the =pickle= module). A cache directory is therefore exactly as trusted as the code itself: anyone who can write a file into it can run code in every process that later reads it.
 - This happens through ordinary use. A user commits a cache directory and collaborators clone it, or a cache sits on a shared cluster filesystem, or someone copies a colleague's cache to skip a long computation.
@@ -13,7 +13,7 @@ There is an in-memory cache, and an optional disk cache that is used only when t
 
 *Constraint: performance must not degrade.* The disk cache exists only to save time, and pickle is fast. A safer format that makes reads or writes noticeably slower defeats its purpose.
 
-**** Task
+* Task
 Formulate an implementation plan for replacing pickle in pyclebsch's disk cache with a storage format (and, if warranted, a layout) whose loader cannot execute code from the file, without degrading performance. Specifically:
 1. Read =pyclebsch/cache.py= and its tests. List the guarantees the current disk cache provides, for example:
    - how entries are validated;
