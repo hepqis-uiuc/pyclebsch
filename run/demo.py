@@ -47,9 +47,9 @@ print(f"{ops.find_plethysms(irrep_8, 3)}\n")
 """
 EXAMPLES FOR pyclebsch.cgc
 (COMPUTED CGCS ARE CACHED IN MEMORY ONLY. TO ALSO KEEP THEM ON DISK ACROSS
-RUNS, CALL pyclebsch.cgc.set_cache_dir() WITH A DIRECTORY FIRST.)
+RUNS, CALL pyclebsch.cgc.set_cgc_cache_dir() WITH A DIRECTORY FIRST.)
 """
-# cgc.set_cache_dir("./cgc-cache")
+# cgc.set_cgc_cache_dir("./cgc-cache")
 
 # This is the dictionary of the CGC data
 # All calculations are done where the CGCs are in an irrep of the symmetric group

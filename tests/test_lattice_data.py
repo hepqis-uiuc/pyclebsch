@@ -21,12 +21,12 @@ def restore_cache_dir():
 
     With default settings the disk cache is off and nothing is written. Tests
     that compute CGCs (irreps_and_singlets / physical_plaquette_states) call
-    cgc.set_cache_dir(tmp_path / "CGC_Data") so that they also exercise the
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data") so that they also exercise the
     disk cache, in a directory of their own.
     """
-    original = cgc.get_cache_dir()
+    original = cgc.get_cgc_cache_dir()
     yield
-    cgc.set_cache_dir(original)
+    cgc.set_cgc_cache_dir(original)
 
 
 def test_lattice_def_planes():
@@ -418,7 +418,7 @@ def _build_d2_pbc_2x2_sites():
 
 def test_irreps_and_singlets_su3_t1_d2_link_irreps(tmp_path):
     """T=1, SU(3): admitted irreps at each 4-link site are {trivial, fund, afund}."""
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     sites = _build_d2_pbc_2x2_sites()
     link_irreps, _site_singlets, _conj_dict = irreps_and_singlets(
         N=3, sites=sites, truncation_mode="T", cutoff=1
@@ -435,7 +435,7 @@ def test_irreps_and_singlets_su3_t1_d2_trivial_singlet_present(tmp_path):
     For an all-trivial 4-tuple there is exactly one distinct permutation, so
     site_singlets[4][((0,0,0),(0,0,0))][((0,0,0),(0,0,0))] == 1.
     """
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     sites = _build_d2_pbc_2x2_sites()
     _, site_singlets, _ = irreps_and_singlets(3, sites, "T", 1)
     trivial = (0, 0, 0)
@@ -444,7 +444,7 @@ def test_irreps_and_singlets_su3_t1_d2_trivial_singlet_present(tmp_path):
 
 def test_irreps_and_singlets_su3_t1_d2_conj_dict_keys(tmp_path):
     """conj_dict covers every irrep that appears in link_irreps."""
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     sites = _build_d2_pbc_2x2_sites()
     link_irreps, _, conj_dict = irreps_and_singlets(3, sites, "T", 1)
     all_irreps = set().union(*link_irreps.values())
@@ -453,7 +453,7 @@ def test_irreps_and_singlets_su3_t1_d2_conj_dict_keys(tmp_path):
 
 def test_irreps_and_singlets_su3_t1_d2_conj_dict_trivial(tmp_path):
     """conj_dict[(0,0,0)] = {0: (0, +1)} — trivial is self-conjugate, phase +1."""
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     sites = _build_d2_pbc_2x2_sites()
     _, _, conj_dict = irreps_and_singlets(3, sites, "T", 1)
     trivial_conj = conj_dict[(0, 0, 0)]
@@ -468,7 +468,7 @@ def test_irreps_and_singlets_su3_t1_d2_conj_dict_fundamental(tmp_path):
 
     Each fund state has |phase| == 1 (sign of a nonzero CGC of magnitude 1/√3).
     """
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     sites = _build_d2_pbc_2x2_sites()
     _, _, conj_dict = irreps_and_singlets(3, sites, "T", 1)
     fund_conj = conj_dict[(1, 0, 0)]
@@ -482,7 +482,7 @@ def test_irreps_and_singlets_su3_t1_d2_conj_dict_fundamental(tmp_path):
 
 def test_irreps_and_singlets_c_mode_runs(tmp_path):
     """C-mode truncation runs to completion on a small lattice."""
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     sites = _build_d2_pbc_2x2_sites()
     link_irreps, _, _ = irreps_and_singlets(3, sites, "C", 4 / 3)
     assert set(link_irreps[4]) >= {(0, 0, 0), (1, 0, 0), (1, 1, 0)}
@@ -490,21 +490,21 @@ def test_irreps_and_singlets_c_mode_runs(tmp_path):
 
 def test_irreps_and_singlets_b_mode_runs(tmp_path):
     """B-mode truncation runs to completion on a small lattice."""
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     sites = _build_d2_pbc_2x2_sites()
     link_irreps, _, _ = irreps_and_singlets(3, sites, "B", 6)
     assert (0, 0, 0) in link_irreps[4]
 
 
 def test_irreps_and_singlets_rejects_invalid_truncation_mode(tmp_path):
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     sites = _build_d2_pbc_2x2_sites()
     with pytest.raises(ValueError):
         irreps_and_singlets(3, sites, "Z", 1)
 
 
 def test_irreps_and_singlets_rejects_invalid_N(tmp_path):
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     sites = _build_d2_pbc_2x2_sites()
     with pytest.raises(ValueError):
         irreps_and_singlets(1, sites, "T", 1)
@@ -521,7 +521,7 @@ def test_physical_plaquette_states_su3_t1_d2_smoke(tmp_path):
     - Active links are 3-tuples; control slots are tuples; multiplicities are ints.
     - The all-trivial state appears.
     """
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     sites, _, plaquettes = sites_links_and_plaquettes(
         (2, 2, 1), (True, True, False), FORDER
     )

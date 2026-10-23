@@ -9,7 +9,7 @@ Covers:
 - Error path on invalid sum_state
 
 The autouse restore_cache_dir fixture points the on-disk CGC cache at each
-test's tmp_path. Because set_cache_dir also clears the in-memory cache,
+test's tmp_path. Because set_cgc_cache_dir also clears the in-memory cache,
 every test starts with an empty cache.
 """
 
@@ -23,10 +23,10 @@ import pyclebsch.cgc as cgc
 @pytest.fixture(autouse=True)
 def restore_cache_dir(tmp_path):
     """Redirect the CGC cache to a tmp dir and restore the original after."""
-    original = cgc.get_cache_dir()
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    original = cgc.get_cgc_cache_dir()
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     yield
-    cgc.set_cache_dir(original)
+    cgc.set_cgc_cache_dir(original)
 
 
 # ---------- calc_cgcs return-shape filtering ----------
@@ -157,9 +157,9 @@ def test_calc_cgcs_normalizes_sum_iweight(normalized, shifted):
     ]
     for extra in call_forms:
         expected = _flatten(cgc.calc_cgcs(PRODUCT_3X3BAR, normalized, *extra))
-        computed_before = cgc.cache_stats().computed
+        computed_before = cgc.cgc_cache_stats()["computed"]
         actual = _flatten(cgc.calc_cgcs(PRODUCT_3X3BAR, shifted, *extra))
-        assert cgc.cache_stats().computed == computed_before, extra
+        assert cgc.cgc_cache_stats()["computed"] == computed_before, extra
         assert actual.keys() == expected.keys(), extra
         assert actual == pytest.approx(expected, abs=SAME_CGC_TOL), extra
 

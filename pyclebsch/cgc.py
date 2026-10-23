@@ -8,13 +8,13 @@ from collections import Counter, defaultdict
 from more_itertools import locate, product_index
 
 from pyclebsch.cache import (
-    CacheKey,
+    _CGCCacheKey,
     ProductState,
-    _cache,
-    cache_stats,
+    _cgc_cache,
+    cgc_cache_stats,
     clear_memory_cache,
-    get_cache_dir,
-    set_cache_dir,
+    get_cgc_cache_dir,
+    set_cgc_cache_dir,
 )
 from pyclebsch.su_n_operators import (
     IrrepWeight,
@@ -565,19 +565,19 @@ def _highest_weight_cgcs(product_irreps: Sequence[IrrepWeight],
                          sum_irrep: IrrepWeight) -> HighestWeightTable:
     """Cached. Returns the shared table: callers must not mutate it, and
     product_irreps must already be sorted (calc_cgcs guarantees both)."""
-    key = CacheKey.highest(product_irreps, sum_irrep, EPS)
-    return _cache.get_or_compute(key, lambda: _compute_highest_weight_cgcs(key.product, key.sum_irrep))
+    key = _CGCCacheKey.highest(product_irreps, sum_irrep, EPS)
+    return _cgc_cache.get_or_compute(key, lambda: _compute_highest_weight_cgcs(key.product, key.sum_irrep))
 
 
 def _lower_weight_cgcs(product_irreps: Sequence[IrrepWeight],
                        sum_irrep: IrrepWeight, mult_idx: int) -> LowerWeightTable:
     """Cached. Returns the shared table: callers must not mutate it, and
     product_irreps must already be sorted (calc_cgcs guarantees both)."""
-    key = CacheKey.lower(product_irreps, sum_irrep, mult_idx, EPS)
-    # A plain int for the computation; CacheKey.lower has already rejected
+    key = _CGCCacheKey.lower(product_irreps, sum_irrep, mult_idx, EPS)
+    # A plain int for the computation; _CGCCacheKey.lower has already rejected
     # non-integer values.
     copy_idx = int(mult_idx)
-    return _cache.get_or_compute(key, lambda: _compute_lower_weight_cgcs(key.product, key.sum_irrep, copy_idx))
+    return _cgc_cache.get_or_compute(key, lambda: _compute_lower_weight_cgcs(key.product, key.sum_irrep, copy_idx))
 
 
 def calc_cgcs(product_iweights: list[tuple], sum_iweight: tuple=None, mult_idx: int=None, sum_state: int=None, product_state: tuple=None) -> dict:
