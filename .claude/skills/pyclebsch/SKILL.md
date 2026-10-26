@@ -21,7 +21,7 @@ user_invocable: true
 - `pyclebsch/symmetric_group/plethysm_utils.py` — Adams operators, Weyl orbits, characters
 - `pyclebsch/matrix_elements/lattice_data.py` — Lattice geometry, plaquette states, truncation, Gauss law
 - `pyclebsch/matrix_elements/plaquette_matrix_elements.py` — Wilson loop matrix elements via site factors
-- `pyclebsch/matrix_elements/helpers.py` — Conjugate irrep, irrep enumeration
+- `pyclebsch/matrix_elements/helpers.py` — Conjugate irrep, N-ality (`n_ality`), irrep enumeration
 - `run/gen_ymcirc_data.py` — JSON generation script for ymcirc
 - `tests/` — pytest suite
 
@@ -240,18 +240,27 @@ Implements the optimized algorithm from arXiv:1610.10088.
 ### LatticeDef
 
 ```python
-@dataclass
+@dataclass(frozen=True)
 class LatticeDef:
     num_sites: tuple[int, int, int]
     PBCs: tuple[bool, bool, bool]
-    FORDER: list[LinkDirection]  # permutation of [1, 2, 3, -1, -2, -3]
+    FORDER: tuple[LinkDirection, ...]  # permutation of (1, 2, 3, -1, -2, -3); a list is stored as a tuple
 ```
 
+A `LatticeDef` cannot be modified: its fields cannot be assigned, and every property is built from immutable values (`frozendict`, tuples, integers, `PlaquetteData`). A mutable copy is the caller's to make: `dict(lattice.sites)`, or `{k: dict(v) for k, v in lattice.plaquette_boundaries.items()}` for the nested tables (`copy.copy` and `copy.deepcopy` return frozendicts).
+
 **Properties** (lazily computed):
-- `planes` — which planes support plaquettes: subset of `[(1,2), (1,3), (2,3)]`
-- `sites` — `{coordinate: [half_link_directions]}` (directions present at that site)
+- `planes` — which planes support plaquettes: subset of `((1,2), (1,3), (2,3))`
+- `sites` — `{coordinate: (half_link_directions)}` (directions present at that site)
 - `links` — `{(coordinate, direction): (start_site, end_site)}`
-- `plaquettes` — `{(coordinate, plane): (active_links, control_links, site_coords, unique_controls)}`
+- `plaquettes` — `{(coordinate, plane): PlaquetteData(active_links, control_links, site_coordinates, unique_controls)}`, a `NamedTuple`
+- `cubes` — cube addresses in lexicographic order; a cube's address is the corner from which the other seven are reached by steps in positive directions (wrapping on periodic axes)
+- `plaquette_boundaries` — `{plaquette: {link: ±1}}`: +1 on l1, l2 and -1 on l3, l4
+- `link_coboundaries` — `{link: {plaquette: ±1}}`, the same signs; every link is a key
+- `cube_boundaries` — `{cube: {face: ±1}}`: the sign of the face's normal e_i x e_j along the cube's outward normal
+- `plaquette_coboundaries` — `{plaquette: {cube: ±1}}`, the same signs; every plaquette is a key
+
+All four tables have both levels as `frozendict`s. On a periodic axis cubes start at every coordinate and face addresses wrap.
 
 ### FORDER Convention
 

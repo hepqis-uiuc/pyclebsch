@@ -236,7 +236,7 @@ def test_cache_keys_complete_across_lattices(
     occurrences: dict[tuple, dict[str, tuple]] = defaultdict(dict)
     for name, lattice in lattices.items():
         for plaquette in sorted(lattice.plaquettes):
-            unique_controls = tuple(tuple(c) for c in lattice.plaquettes[plaquette][3])
+            unique_controls = lattice.plaquettes[plaquette].unique_controls
             key = (compute_plaquette_signature(plaquette, lattice), unique_controls)
             occurrences[key].setdefault(name, plaquette)
     shared = {

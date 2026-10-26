@@ -17,6 +17,7 @@ import pytest
 
 import pyclebsch.cgc as cgc
 from pyclebsch.matrix_elements.lattice_data import (
+    LinkDirection,
     irreps_and_singlets,
     physical_plaquette_states,
     sites_links_and_plaquettes,
@@ -27,7 +28,7 @@ from pyclebsch.matrix_elements.plaquette_matrix_elements import (
 )
 from pyclebsch.su_n_operators import calc_dimension
 
-FORDER = [1, 2, 3, -1, -2, -3]
+FORDER: list[LinkDirection] = [1, 2, 3, -1, -2, -3]
 N_COLORS = 3
 EPS = 1e-10
 PRES = 10
@@ -232,7 +233,7 @@ def test_open_bc_b_truncation_glueing_succeeds(cache_dir, num_sites, PBCs, cutof
     sites, plaquettes, truncation_irreps, singlets, conj_dict = _lattice_objects_for(
         num_sites, PBCs, cutoff
     )
-    half_link_counts = [len(sites[s]) for s in plaquettes[P][2]]
+    half_link_counts = [len(sites[s]) for s in plaquettes[P].site_coordinates]
     assert len(set(half_link_counts)) > 1, (
         f"Case {num_sites} {P} is meant to have vertices with differing "
         f"half-link counts, got {half_link_counts}."

@@ -13,6 +13,19 @@ def conjugate_iweight(iweight: IrrepWeight) -> IrrepWeight:
     first,last = iweight[0],iweight[-1]
     return tuple(first - j + last for j in iweight[::-1])
 
+def n_ality(iweight: IrrepWeight) -> int:
+    """
+    The N-ality of an SU(N) irrep: its charge under the center of SU(N),
+    the group of the N-th roots of unity times the identity.
+
+    It is the sum of the entries of the i-weight normalized to last entry 0
+    (the number of boxes in its Young diagram), mod N, with N the length of
+    the i-weight. The N-alities of an irrep and its conjugate add to 0 mod N.
+    """
+    N = len(iweight)
+    last = iweight[-1]
+    return sum(entry - last for entry in iweight) % N
+
 def get_irreps(max_casimir: int | float, N: int) -> dict[tuple, float]:
     """
     Identifies all SU(N) irreps whose quadratic Casimirs are at most

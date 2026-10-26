@@ -81,7 +81,7 @@ Each statistics function returns a new dict. The plaquette caches report `memory
 ### Upgrading from pyclebsch 0.2.0
 Functions that act on the CGC cache only now say so in their names:
 
-| 0.2.0                    | 0.2.1                        |
+| 0.2.0                    | 0.3.0                        |
 |--------------------------|------------------------------|
 | `cache_stats`            | `cgc_cache_stats`            |
 | `set_memory_cache_limit` | `set_cgc_memory_cache_limit` |
@@ -91,6 +91,8 @@ Functions that act on the CGC cache only now say so in their names:
 `cgc_cache_stats()` returns a dict, `{"memory_hits": ..., "computed": ..., ...}`, instead of a `CacheStats` object, which no longer exists: write `stats["computed"]` where 0.2.0 had `stats.computed`.
 
 `clear_memory_cache` keeps its name; it now also clears the plaquette caches. The environment variable `PYCLEBSCH_CACHE_DIR` is unchanged. `pyclebsch.cache.CGCCache` and `pyclebsch.cache.CacheKey` are now internal; use the module-level functions instead. `from pyclebsch import *` imports exactly the names in `pyclebsch.__all__`.
+
+pyclebsch 0.3.0 requires Python 3.15 or later, for the builtin `frozendict`. A `LatticeDef` can no longer be modified: its fields cannot be assigned (lists given for them are stored as tuples), and everything it computes is immutable at every level. `sites`, `links`, `plaquettes` and the new cell data (`cubes`, `plaquette_boundaries`, `link_coboundaries`, `cube_boundaries`, `plaquette_coboundaries`) are `frozendict`s or tuples, and the sequences inside them are tuples rather than lists. Each value of `plaquettes` is a `PlaquetteData` named tuple, which can still be indexed by position. For a mutable copy, use `dict(lattice.sites)`, or `{k: dict(v) for k, v in lattice.plaquette_boundaries.items()}` for a table of tables; `copy.copy` and `copy.deepcopy` return frozendicts.
 
 ### Upgrading from pyclebsch 0.1
 - Nothing is written to disk by default, and `get_cgc_cache_dir()` returns `None` until a directory is set. Scripts that relied on `./CGC_Data` persisting across runs should call `set_cgc_cache_dir` or set `PYCLEBSCH_CACHE_DIR`.
