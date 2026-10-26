@@ -81,7 +81,7 @@ type OrientationSign = Literal[1, -1]
 _PLANE_NORMALS: dict[Plane, tuple[int, OrientationSign]] = {(1, 2): (3, 1), (1, 3): (2, -1), (2, 3): (1, 1)}
 
 
-class PlaquetteData(NamedTuple):
+class PlaquetteGeometry(NamedTuple):
     """
     The links and sites of one plaquette, as stored in LatticeDef.plaquettes.
 
@@ -121,7 +121,7 @@ class LatticeDef:
 
     A LatticeDef cannot be modified: its fields are stored as tuples and
     cannot be assigned, and everything it computes from them is built from
-    immutable values: frozendicts, tuples, integers and PlaquetteData. So
+    immutable values: frozendicts, tuples, integers and PlaquetteGeometry. So
     the data cannot become inconsistent with the lattice it describes. A
     mutable copy of a property is the caller's to make: dict(lattice.sites)
     is a plain dict, and for the properties whose values are frozendicts,
@@ -157,7 +157,7 @@ class LatticeDef:
     def _sites_links_and_plaquettes(self) -> tuple[
             frozendict[SiteCoordinate, SiteHalfLinks],
             frozendict[LinkAddress, tuple[SiteCoordinate, SiteCoordinate]],
-            frozendict[PlaquetteAddress, PlaquetteData]]:
+            frozendict[PlaquetteAddress, PlaquetteGeometry]]:
         sites, links, plaquettes = sites_links_and_plaquettes(self.num_sites, self.PBCs, self.FORDER)
         return frozendict(sites), frozendict(links), frozendict(plaquettes)
 
@@ -177,12 +177,13 @@ class LatticeDef:
         return self._sites_links_and_plaquettes[1]
 
     @property
-    def plaquettes(self) -> frozendict[PlaquetteAddress, PlaquetteData]:
+    def plaquettes(self) -> frozendict[PlaquetteAddress, PlaquetteGeometry]:
         """
         The plaquettes of the lattice: for each plaquette address (the
-        coordinates of its site s1 and its plane), a PlaquetteData with its
+        coordinates of its site s1 and its plane), a PlaquetteGeometry with its
         active_links, control_links, site_coordinates and unique_controls. See
-        PlaquetteData for the labels s1-s4 and l1-l4 and what each field holds.
+        PlaquetteGeometry for the labels s1-s4 and l1-l4 and what each field
+        holds.
         """
         return self._sites_links_and_plaquettes[2]
 
@@ -209,15 +210,15 @@ class LatticeDef:
         """
         The boundary of each plaquette: its four links, each with its
         orientation sign in the plaquette, +1 for l1 and l2 and -1 for l3 and
-        l4 (see PlaquetteData for the labels). The loop s1 -> s2 -> s3 -> s4
+        l4 (see PlaquetteGeometry for the labels). The loop s1 -> s2 -> s3 -> s4
         -> s1 traverses l1 and l2 along their directions and l3 and l4
         against them, so the boundary is l1 + l2 - l3 - l4. This is the
         direction of the Wilson loop whose matrix elements
         calc_plaquette_elements computes.
         """
         return frozendict(
-            (plaquette_address, frozendict(zip(plaquette_data.active_links, (1, 1, -1, -1))))
-            for plaquette_address, plaquette_data in self.plaquettes.items()
+            (plaquette_address, frozendict(zip(plaquette_geometry.active_links, (1, 1, -1, -1))))
+            for plaquette_address, plaquette_geometry in self.plaquettes.items()
         )
 
     @functools.cached_property
@@ -352,7 +353,7 @@ class LatticeDef:
 def sites_links_and_plaquettes(num_sites: tuple[int, int, int] | list[int], PBCs: tuple[bool, bool, bool] | list[bool], FORDER) -> tuple[
         dict[SiteCoordinate, SiteHalfLinks],
         dict[LinkAddress, tuple[SiteCoordinate, SiteCoordinate]],
-        dict[PlaquetteAddress, PlaquetteData]
+        dict[PlaquetteAddress, PlaquetteGeometry]
 ]:
     """
     Sets up sites, links, and plaquettes of the cubic lattice.
@@ -361,7 +362,7 @@ def sites_links_and_plaquettes(num_sites: tuple[int, int, int] | list[int], PBCs
     Links are returned as keys of a dictionary whose values are
     (initial site, final site).
     Plaquettes are returned as keys of a dictionary whose values are
-    PlaquetteData: the plaquette's links, the control links at each of its
+    PlaquetteGeometry: the plaquette's links, the control links at each of its
     sites, its sites, and the unique controls at each site (the indices of
     the control links that are not a control link of an earlier site).
     Everything in the values is a tuple; the three dictionaries are new on
@@ -473,7 +474,7 @@ def sites_links_and_plaquettes(num_sites: tuple[int, int, int] | list[int], PBCs
                                 if all(C not in clist for clist in ctrl_links): uniques.append(count)
                                 count += 1
                         ctrl_links.append(tuple(clinks)), unique_ctrls.append(tuple(uniques))
-                    plaquettes[(s1, (i+1,j+1))] = PlaquetteData(tuple([l1,l2,l3,l4]), tuple(ctrl_links), tuple([s1,s2,s3,s4]), tuple(unique_ctrls))
+                    plaquettes[(s1, (i+1,j+1))] = PlaquetteGeometry(tuple([l1,l2,l3,l4]), tuple(ctrl_links), tuple([s1,s2,s3,s4]), tuple(unique_ctrls))
 
     # Cast the values of sites to tuples so that a user cannot modify
     # the data inside a LatticeDef.
@@ -563,7 +564,7 @@ def irreps_and_singlets(
 def physical_plaquette_states(
         P: PlaquetteAddress,
         sites: Mapping[SiteCoordinate, SiteHalfLinks],
-        plaquettes: Mapping[PlaquetteAddress, PlaquetteData],
+        plaquettes: Mapping[PlaquetteAddress, PlaquetteGeometry],
         singlets: SiteSinglets,
         FORDER: Sequence[LinkDirection]
 ) -> list[PlaquetteState]:

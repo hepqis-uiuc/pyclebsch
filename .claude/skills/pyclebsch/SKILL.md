@@ -247,13 +247,13 @@ class LatticeDef:
     FORDER: tuple[LinkDirection, ...]  # permutation of (1, 2, 3, -1, -2, -3); a list is stored as a tuple
 ```
 
-A `LatticeDef` cannot be modified: its fields cannot be assigned, and every property is built from immutable values (`frozendict`, tuples, integers, `PlaquetteData`). A mutable copy is the caller's to make: `dict(lattice.sites)`, or `{k: dict(v) for k, v in lattice.plaquette_boundaries.items()}` for the nested tables (`copy.copy` and `copy.deepcopy` return frozendicts).
+A `LatticeDef` cannot be modified: its fields cannot be assigned, and every property is built from immutable values (`frozendict`, tuples, integers, `PlaquetteGeometry`). A mutable copy is the caller's to make: `dict(lattice.sites)`, or `{k: dict(v) for k, v in lattice.plaquette_boundaries.items()}` for the nested tables (`copy.copy` and `copy.deepcopy` return frozendicts).
 
 **Properties** (lazily computed):
 - `planes` — which planes support plaquettes: subset of `((1,2), (1,3), (2,3))`
 - `sites` — `{coordinate: (half_link_directions)}` (directions present at that site)
 - `links` — `{(coordinate, direction): (start_site, end_site)}`
-- `plaquettes` — `{(coordinate, plane): PlaquetteData(active_links, control_links, site_coordinates, unique_controls)}`, a `NamedTuple`
+- `plaquettes` — `{(coordinate, plane): PlaquetteGeometry(active_links, control_links, site_coordinates, unique_controls)}`, a `NamedTuple`
 - `cubes` — cube addresses in lexicographic order; a cube's address is the corner from which the other seven are reached by steps in positive directions (wrapping on periodic axes)
 - `plaquette_boundaries` — `{plaquette: {link: ±1}}`: +1 on l1, l2 and -1 on l3, l4
 - `link_coboundaries` — `{link: {plaquette: ±1}}`, the same signs; every link is a key

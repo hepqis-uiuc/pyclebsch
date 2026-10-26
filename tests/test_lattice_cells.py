@@ -283,10 +283,10 @@ def test_box_changes_active_link_n_ality_by_orientation(name):
     )
     matrix_element_count = 0
     mismatches = []
-    for plaquette_address, plaquette_data in lattice.plaquettes.items():
+    for plaquette_address, plaquette_geometry in lattice.plaquettes.items():
         expected = tuple(
             lattice.plaquette_boundaries[plaquette_address][link] % N_COLORS
-            for link in plaquette_data.active_links
+            for link in plaquette_geometry.active_links
         )
         matrix_elements = calc_plaquette_elements(
             N_COLORS,
