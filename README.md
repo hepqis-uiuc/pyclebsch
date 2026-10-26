@@ -1,5 +1,5 @@
 # pyclebsch
-A Python package for calculating SU(N) Clebsch-Gordan coefficients (CGCs). It is largely based on the algorithm presented in https://homepages.physik.uni-muenchen.de/~vondelft/PapersVonDelft/Alex2011.pdf, with some modifications to account for residual symmetric group symmetries that can be present in computed CGCs.
+A Python package for calculating SU(N) Clebsch-Gordan coefficients (CGCs). It is largely based on the algorithm presented in A. Alex et al., arXiv:1009.0437 (https://homepages.physik.uni-muenchen.de/~vondelft/PapersVonDelft/Alex2011.pdf), with some modifications to account for residual symmetric group symmetries that can be present in computed CGCs.
 
 Computed Clebsch-Gordan coefficients, and the plaquette tables of the lattice code, are cached in memory by default; to save CGCs to disk, see "Caching" below.
 

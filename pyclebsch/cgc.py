@@ -1,3 +1,71 @@
+"""
+Clebsch-Gordan coefficients (CGCs) of SU(N).
+
+calc_cgcs decomposes a tensor product of irreps into irreps, and gives the
+CGCs: the coefficients of each basis state of each irrep in the
+decomposition in the basis of product states. The method extends that of
+A. Alex et al., arXiv:1009.0437, to which the equations and pages cited in
+this module's docstrings ("~Eqs. (33)-(34)", "~Pg. 14") refer.
+- From Alex et al.: the highest-weight states of the copies of an irrep
+  span the product states of that weight that every raising operator
+  annihilates; the irrep's other states follow by applying lowering
+  operators.
+- Added in pyclebsch (described in P. Balaji et al., arXiv:2509.25865,
+  Appendix C): where the product repeats an irrep, the highest-weight
+  states of its copies are chosen to transform under irreps of the
+  symmetric group that permutes the repeated factors (see "Why the copies
+  are chosen this way" below). su_n_operators.find_symmetry_direct_sum gives
+  how many copies transform under each irrep of the symmetric group, from
+  plethysms computed as in GroupMath (R. M. Fonseca, arXiv:2011.01764). The
+  Young projection operators of J. Alcock-Zeilinger et al., arXiv:1610.10088
+  (symmetric_group.young_symmetrizer), then pick out those copies.
+
+Labels: irreps are i-weights (IrrepWeight, from su_n_operators), and the
+basis states of an irrep are numbered as in su_n_operators, from 0. The
+arguments of calc_cgcs are named for the two sides of the decomposition:
+product_iweights are the factors of the direct product, and sum_iweight is
+an irrep in the direct sum they decompose into. sum_state numbers a basis
+state of that irrep, and product_state is a basis state of the product: a
+tuple of basis-state indices, one for each factor, in the order of
+product_iweights. The copies of an irrep in the decomposition (an irrep can
+appear more than once, as the adjoint does in 8 x 8 of SU(3)) are numbered
+from 1 by the multiplicity index, mult_idx. A CGC smaller than EPS in
+magnitude counts as zero and is left out.
+
+Why the copies are chosen this way: when a tensor product repeats an irrep,
+an irrep can appear in its decomposition more than once, and its copies are
+then unique only up to a rotation among them. Choosing copies with definite
+symmetry under exchange of the repeated factors removes much of that
+arbitrariness, and gives the copies a meaning. For example, the adjoint
+appears twice in 8 x 8 of SU(3): calc_cgcs returns as copy 1 the one
+antisymmetric under exchange of the two factors (the coupling with f_abc)
+and as copy 2 the symmetric one (the coupling with d_abc).
+
+The same symmetry is why the order of the factors given to calc_cgcs
+matters only when irreps repeat. Exchanging two identical factors flips the
+sign of an antisymmetric copy, and can mix copies that together transform
+under an irrep of S_n of dimension 2 or more. FORDER, in
+matrix_elements.lattice_data, fixes that order for the singlets at a lattice
+site.
+
+calc_cgcs's result is a nested dict,
+{sum_iweight: {mult_idx: {sum_state: {product_state: CGC}}}}, and each of
+its optional arguments, in the order sum_iweight, mult_idx, sum_state,
+product_state, selects one key at the next level down:
+calc_cgcs(product_iweights, sum_iweight) returns
+{mult_idx: {sum_state: {product_state: CGC}}} for that irrep, and with all
+four arguments the result is a single CGC (0 if that product state has
+none). An argument is ignored unless all those before it are given. For
+example, the singlet in 3 x 3bar of SU(3),
+
+    calc_cgcs([(1, 0, 0), (1, 1, 0)], (0, 0, 0), 1, 0),
+
+is {(0, 2): 1/sqrt(3), (1, 1): -1/sqrt(3), (2, 0): 1/sqrt(3)}. Computed CGCs
+are cached (see pyclebsch.cache). print_cgcs prints CGCs with the
+Gelfand-Tsetlin patterns of the states, and check_cgcs checks that the CGCs
+of a product form an orthogonal matrix.
+"""
+
 from collections.abc import Sequence
 
 import numpy as np

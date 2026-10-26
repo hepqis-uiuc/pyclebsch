@@ -1,3 +1,34 @@
+"""
+Young projection operators on tensor products with repeated factors.
+
+Within pyclebsch they serve cgc: calc_cgcs uses them to give the copies of
+a repeated irrep definite symmetry under exchange of the repeated factors,
+which removes much of the arbitrariness in choosing those copies (cgc's
+docstring has an example). young_symmetrizer is public, and can also be
+used on its own.
+
+Permutations of n identical factors of a tensor product split it into its
+isotypic components, one for each irrep λ of S_n (see
+su_n_operators.find_plethysms). For each standard Young tableau of shape λ,
+the Young projection operator is a combination of permutations of the
+factors whose image is a subspace of the λ isotypic component that SU(N)
+maps to itself. The operators of the standard tableaux of one shape are
+Hermitian projectors, orthogonal to each other.
+
+young_symmetrizer(tableaux, idx_list) yields, as (coefficient, permutation)
+pairs, the product of the operators for one standard Young tableau on each
+group of factors in idx_list; its docstring has an example. For a tableau
+with a single row, the operator is the symmetrizer (1/n!) Σ_σ σ, summed over
+all permutations σ of the n factors, which projects onto the states
+symmetric under every permutation. For a single column it is the
+antisymmetrizer (1/n!) Σ_σ sgn(σ) σ, which projects onto the antisymmetric
+states. For any other tableau it is the compact Hermitian Young projection
+operator of J. Alcock-Zeilinger et al., arXiv:1610.10088, whose equations,
+theorems and definitions the comments cite ("~Eq. (26)", "~Theorem 4"). The
+other functions are internal: the sign of a permutation, and products of
+sums of permutations.
+"""
+
 from math import factorial
 from collections import defaultdict
 from collections.abc import Generator
