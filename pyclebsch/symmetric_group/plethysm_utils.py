@@ -9,12 +9,16 @@ http://www-math.univ-poitiers.fr/~maavl/LiE/):
 
     V^(λ) = sum over ρ of (|C_ρ| / n!) χ_λ(ρ) ψ^(ρ_1)(V) x ψ^(ρ_2)(V) x ...,
 
-summed over the cycle types ρ of permutations of n objects. These helpers
-supply its pieces:
-- A permutation's cycle type ρ is the list of the lengths of its cycles, a
-  partition of n. For example, the permutation of 3 objects that swaps two
-  and fixes one has cycle type [2, 1]. The permutations with one cycle type
-  form a conjugacy class C_ρ. _class_order gives its size,
+summed over the partitions ρ of n, each listing the cycle lengths of one
+class of permutations (defined below). These helpers supply its pieces:
+- A permutation of n objects splits into disjoint cycles: groups of objects
+  that it moves around in a loop, with an object it leaves alone counting
+  as a cycle of length 1. For example, the permutation of 3 objects that
+  swaps two and fixes one has cycles of lengths 2 and 1. A permutation's
+  cycle lengths, sorted from longest, form a partition ρ of n ([2, 1] in
+  the example; the literature calls ρ the permutation's cycle type). Two
+  permutations are conjugate exactly when their cycle lengths agree, so
+  each ρ labels a conjugacy class C_ρ. _class_order gives its size,
   |C_ρ| = n! / prod_k (k^(m_k) m_k!), where m_k is the number of cycles of
   length k. _class_character gives the character χ_λ(ρ) of the irrep λ of
   S_n on that class, by the Murnaghan-Nakayama rule (see the reference in
@@ -35,8 +39,9 @@ supply its pieces:
   roots).
   _find_iweight gives the i-weight of the irrep with a given highest weight.
 
-For example, with V the SU(3) fundamental and λ = [2, 1], the cycle types
-[1, 1, 1], [2, 1] and [3] give
+For example, with V the SU(3) fundamental and λ = [2, 1], the classes with
+cycle lengths [1, 1, 1], [2, 1] and [3] (the identity, the 3 swaps and the
+2 three-cycles) give
 V^([2, 1]) = (1/6)[2 (3 x 3 x 3) + 0 - 2 ψ^3(3)] = 8.
 """
 
@@ -46,8 +51,8 @@ from collections import Counter, defaultdict
 from pyclebsch.symmetric_group.tableaux import _rim_hooks
 
 def _class_order(partition, n):
-    """Calculates the order of the conjugacy
-    class of the Sn irrep given by partition.
+    """The number of permutations of n objects with the cycle lengths given
+    by partition.
     """
     prod,cycle_tally = 1,Counter(partition)
     for cycle_len, num in cycle_tally.items():
@@ -56,16 +61,18 @@ def _class_order(partition, n):
     return round(factorial(n)/prod)
 
 
-def _class_character(partition, Sn_partition):
-    """Computes the character of an Sn_partition
-    in the irrep given by partition recursively.
+def _class_character(irrep_partition, cycle_lengths):
+    """Computes, recursively, the character of the irrep of S_n labeled by
+    irrep_partition on the permutations with the given cycle_lengths.
     """
-    if len(partition)==0:
+    if len(irrep_partition)==0:
         return 1
     else:
-        new_irreps = _rim_hooks(partition, Sn_partition[0])
-        new_Sn_irrep = Sn_partition[1:]
-        character = sum((-1)**l * _class_character(p,new_Sn_irrep) for p,l in new_irreps)
+        new_irreps = _rim_hooks(irrep_partition, cycle_lengths[0])
+        remaining_cycle_lengths = cycle_lengths[1:]
+        character = sum(
+            (-1)**l * _class_character(p, remaining_cycle_lengths) for p, l in new_irreps
+        )
         return character
 
 
