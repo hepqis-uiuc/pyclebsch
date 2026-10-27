@@ -5,6 +5,7 @@ from pyclebsch.matrix_elements.lattice_data import (
     LatticeDef,
     LinkDirection,
     PlaquetteAddress,
+    PlaquetteGeometry,
     PlaquetteSignature,
     compute_plaquette_signature,
     irreps_and_singlets,
@@ -66,6 +67,14 @@ def test_lattice_def_planes():
     assert lattice.planes == ((1, 2), (1, 3), (2, 3))
     lattice = LatticeDef(num_sites=(4, 3, 2), PBCs=(False, False, False), FORDER=FORDER)
     assert lattice.planes == ((1, 2), (1, 3), (2, 3))
+
+
+@pytest.mark.parametrize("num_sites", [(0, 2, 2), (2, 0, 2), (2, 2, 0), (-1, 2, 2)])
+def test_lattice_def_planes_rejects_sizes_below_one(num_sites):
+    """planes raises a ValueError for an axis with fewer than one site."""
+    lattice = LatticeDef(num_sites=num_sites, PBCs=(False, False, False), FORDER=FORDER)
+    with pytest.raises(ValueError, match="positive integers"):
+        _ = lattice.planes
 
 
 def test_lattice_def_site_exists():
@@ -553,3 +562,40 @@ def test_physical_plaquette_states_su3_t1_d2_smoke(tmp_path):
         0, 0, 0, 0,
     )
     assert all_trivial in states
+
+
+# ===========================================================================
+# PlaquetteGeometry
+# ===========================================================================
+
+@pytest.mark.parametrize(
+    "num_sites,PBCs",
+    [((3, 2, 2), (False, False, False)), ((2, 2, 2), (True, True, True)), ((3, 2, 1), (True, False, False))],
+)
+def test_plaquette_values_are_plaquette_geometry(num_sites, PBCs):
+    """Every value of plaquettes, from LatticeDef and from
+    sites_links_and_plaquettes, is a PlaquetteGeometry whose fields are the
+    positions they name, and each field holds what its name says."""
+    sites, links, plaquettes = sites_links_and_plaquettes(num_sites, PBCs, FORDER)
+    lattice = LatticeDef(num_sites=num_sites, PBCs=PBCs, FORDER=FORDER)
+    assert lattice.plaquettes == plaquettes
+    for plaquette_geometry in list(plaquettes.values()) + list(lattice.plaquettes.values()):
+        assert isinstance(plaquette_geometry, PlaquetteGeometry)
+        assert plaquette_geometry.active_links == plaquette_geometry[0]
+        assert plaquette_geometry.control_links == plaquette_geometry[1]
+        assert plaquette_geometry.site_coordinates == plaquette_geometry[2]
+        assert plaquette_geometry.unique_controls == plaquette_geometry[3]
+    for (s1, (i, j)), plaquette_geometry in plaquettes.items():
+        # Sites s1, s2, s3, s4; l1 runs from s1 to s2 and l4 from s1 to s4.
+        assert plaquette_geometry.site_coordinates[0] == s1
+        assert all(site in sites for site in plaquette_geometry.site_coordinates)
+        l1, _, _, l4 = plaquette_geometry.active_links
+        assert l1 == (s1, i) and links[l1] == (s1, plaquette_geometry.site_coordinates[1])
+        assert l4 == (s1, j) and links[l4] == (s1, plaquette_geometry.site_coordinates[3])
+        # Each site's control links are its links other than the two active ones.
+        for site, control_links, unique_control_indices in zip(
+            plaquette_geometry.site_coordinates, plaquette_geometry.control_links, plaquette_geometry.unique_controls
+        ):
+            assert len(control_links) == len(sites[site]) - 2
+            assert all(link in links and link not in plaquette_geometry.active_links for link in control_links)
+            assert all(0 <= index < len(control_links) for index in unique_control_indices)

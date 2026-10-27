@@ -13,7 +13,7 @@ from pyclebsch.symmetric_group.plethysm_utils import _Adams, _class_character, _
 from pyclebsch.symmetric_group.tableaux import find_partitions
 
 
-type IrrepWeight = tuple[int, int, ...] # Length N corresponds to SU(N) iweight.
+type IrrepWeight = tuple[int, ...] # Length N corresponds to SU(N) iweight.
 
 def normalize_iweight(iweight: IrrepWeight) -> IrrepWeight:
     """Returns normalized i-weight.

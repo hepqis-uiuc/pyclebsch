@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from pyclebsch.matrix_elements.helpers import conjugate_iweight, get_irreps
+from pyclebsch.matrix_elements.helpers import conjugate_iweight, get_irreps, n_ality
 from pyclebsch.su_n_operators import calc_casimir, calc_dimension
 
 
@@ -117,3 +117,35 @@ def test_get_irreps_su2_at_fundamental_casimir():
     assert set(result.keys()) == {(0, 0), (1, 0)}
     assert result[(0, 0)] == 0
     assert math.isclose(result[(1, 0)], 3 / 4)
+
+
+# ---------- n_ality ----------
+
+@pytest.mark.parametrize(
+    "iweight,expected_n_ality",
+    [
+        # SU(3): 1, 3, 3̄, 6, 6̄, 8, 15, 15̄.
+        ((0, 0, 0), 0),
+        ((1, 0, 0), 1),
+        ((1, 1, 0), 2),
+        ((2, 0, 0), 2),
+        ((2, 2, 0), 1),
+        ((2, 1, 0), 0),
+        ((3, 1, 0), 1),
+        ((3, 2, 0), 2),
+        # SU(3), i-weights not normalized to last entry 0: 8 and 3.
+        ((3, 2, 1), 0),
+        ((2, 1, 1), 1),
+        # SU(2): the fundamental.
+        ((1, 0), 1),
+    ],
+)
+def test_n_ality_explicit(iweight, expected_n_ality):
+    assert n_ality(iweight) == expected_n_ality
+
+
+def test_n_ality_of_conjugate_cancels():
+    """K(R) + K(conj R) = 0 mod 3 on every SU(3) irrep of the B10 truncation."""
+    irreps = get_irreps(max_casimir=10, N=3)
+    for iweight in irreps:
+        assert (n_ality(iweight) + n_ality(conjugate_iweight(iweight))) % 3 == 0, iweight

@@ -12,7 +12,7 @@ import pytest
 
 import pyclebsch.cgc as cgc
 from pyclebsch import cache
-from pyclebsch.matrix_elements.lattice_data import irreps_and_singlets, sites_links_and_plaquettes
+from pyclebsch.matrix_elements.lattice_data import LinkDirection, irreps_and_singlets, sites_links_and_plaquettes
 from pyclebsch.matrix_elements.plaquette_matrix_elements import calc_plaquette_elements
 
 
@@ -195,7 +195,7 @@ def test_float_iweights_rejected_without_side_effects(tmp_path, monkeypatch):
 # --- Memory tier ---
 
 # Lattice-code parameters, as in tests/test_plaquette_matrix_elements.py.
-FORDER = [1, 2, 3, -1, -2, -3]
+FORDER: list[LinkDirection] = [1, 2, 3, -1, -2, -3]
 N_COLORS = 3
 EPS = 1e-10
 PRES = 10
@@ -335,7 +335,7 @@ def test_set_cgc_cache_dir_clears_memory(tmp_path):
     assert any(f.is_file() for f in (tmp_path / "second").rglob("*"))
 
 
-def _synthetic_key(label: int) -> "cache._CGCCacheKey":
+def _synthetic_key(label: int) -> cache._CGCCacheKey:
     """A distinct key per label; the tables stored under it are synthetic."""
     return cache._CGCCacheKey.lower([(label, 0, 0), (label, 0, 0)], (2 * label, 0, 0), 1, EPS)
 

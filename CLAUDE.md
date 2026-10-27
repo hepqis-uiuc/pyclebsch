@@ -4,7 +4,7 @@ SU(N) Clebsch-Gordan coefficient computation library with lattice gauge theory a
 
 ## Quick Reference
 
-- **Language**: Python 3.14+
+- **Language**: Python 3.15+
 - **Package manager**: uv
 - **Test framework**: pytest
 
@@ -25,9 +25,9 @@ SU(N) Clebsch-Gordan coefficient computation library with lattice gauge theory a
 - `symmetric_group/` — Young tableaux, symmetrizers, plethysm utilities
 
 ### Lattice Gauge Theory (`pyclebsch/matrix_elements/`)
-- `lattice_data.py` — LatticeDef, plaquette geometry, truncation schemes, Gauss law, physical states
+- `lattice_data.py` — LatticeDef (frozen, with immutable cell data: sites, links, plaquettes, cubes, and boundaries and coboundaries with orientation signs), truncation schemes, Gauss law, physical states
 - `plaquette_matrix_elements.py` — Wilson loop matrix elements via site factor factorization
-- `helpers.py` — Casimir, conjugate_irrep, get_irreps
+- `helpers.py` — Casimir, conjugate_irrep, n_ality, get_irreps
 
 ### Scripts (`run/`)
 - `gen_ymcirc_data.py` — Generates compressed JSON files for ymcirc consumption
