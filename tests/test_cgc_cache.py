@@ -1,5 +1,4 @@
 import copy
-import dataclasses
 import json
 import os
 import pickle
@@ -12,16 +11,16 @@ from pathlib import Path
 import pytest
 
 import pyclebsch.cgc as cgc
-from pyclebsch import cache as cgc_cache
+from pyclebsch import cache
 from pyclebsch.matrix_elements.lattice_data import irreps_and_singlets, sites_links_and_plaquettes
 from pyclebsch.matrix_elements.plaquette_matrix_elements import calc_plaquette_elements
 
 
 @pytest.fixture(autouse=True)
 def restore_cache_dir():
-    original = cgc.get_cache_dir()
+    original = cgc.get_cgc_cache_dir()
     yield
-    cgc.set_cache_dir(original)
+    cgc.set_cgc_cache_dir(original)
 
 
 # --- Defaults and configuration ---
@@ -46,10 +45,10 @@ def _run_python(code: str, cwd: Path, env_updates: dict[str, str | None]) -> str
     return completed.stdout.strip()
 
 
-PRINT_CACHE_DIR = "from pyclebsch.cache import get_cache_dir; print(get_cache_dir())"
+PRINT_CACHE_DIR = "from pyclebsch.cache import get_cgc_cache_dir; print(get_cgc_cache_dir())"
 COMPUTE_AND_PRINT_CACHE_DIR = (
     "import pyclebsch.cgc as cgc; cgc.calc_cgcs([(1, 0, 0), (1, 1, 0)]); "
-    "print(cgc.get_cache_dir())"
+    "print(cgc.get_cgc_cache_dir())"
 )
 
 
@@ -68,33 +67,33 @@ def test_empty_env_var_disables_disk_cache(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_set_cache_dir_requires_explicit_path(tmp_path, monkeypatch):
-    """There is no default location: set_cache_dir needs an argument, and an
+def test_set_cgc_cache_dir_requires_explicit_path(tmp_path, monkeypatch):
+    """There is no default location: set_cgc_cache_dir needs an argument, and an
     empty path is rejected without changing any setting."""
     monkeypatch.delenv(CACHE_DIR_ENV_VAR, raising=False)
     with pytest.raises(TypeError):
-        cgc.set_cache_dir()
-    cgc.set_cache_dir(tmp_path / "disk")
-    configured = cgc.get_cache_dir()
+        cgc.set_cgc_cache_dir()
+    cgc.set_cgc_cache_dir(tmp_path / "disk")
+    configured = cgc.get_cgc_cache_dir()
     with pytest.raises(ValueError):
-        cgc.set_cache_dir("")
-    assert cgc.get_cache_dir() == configured
+        cgc.set_cgc_cache_dir("")
+    assert cgc.get_cgc_cache_dir() == configured
     assert os.environ[CACHE_DIR_ENV_VAR] == str(configured)
 
 
-def test_set_cache_dir_resolves_relative_path(tmp_path, monkeypatch):
+def test_set_cgc_cache_dir_resolves_relative_path(tmp_path, monkeypatch):
     """A relative path is resolved when it is set, so a later chdir does not
     move the cache."""
     (tmp_path / "elsewhere").mkdir()
     monkeypatch.chdir(tmp_path)
-    cgc.set_cache_dir("rel")
-    assert cgc.get_cache_dir() == (tmp_path / "rel").resolve()
+    cgc.set_cgc_cache_dir("rel")
+    assert cgc.get_cgc_cache_dir() == (tmp_path / "rel").resolve()
     monkeypatch.chdir(tmp_path / "elsewhere")
-    assert cgc.get_cache_dir() == (tmp_path / "rel").resolve()
+    assert cgc.get_cgc_cache_dir() == (tmp_path / "rel").resolve()
 
 
 def test_cache_dir_expands_home(tmp_path, monkeypatch):
-    """A leading ~ is expanded, both in set_cache_dir and in an unexpanded
+    """A leading ~ is expanded, both in set_cgc_cache_dir and in an unexpanded
     PYCLEBSCH_CACHE_DIR, and no directory named ~ is created."""
     home, work = tmp_path / "home", tmp_path / "cwd"
     home.mkdir()
@@ -102,8 +101,8 @@ def test_cache_dir_expands_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.chdir(work)
-    cgc.set_cache_dir("~/cgc")
-    assert cgc.get_cache_dir() == (home / "cgc").resolve()
+    cgc.set_cgc_cache_dir("~/cgc")
+    assert cgc.get_cgc_cache_dir() == (home / "cgc").resolve()
     out = _run_python(COMPUTE_AND_PRINT_CACHE_DIR, work,
                       {CACHE_DIR_ENV_VAR: "~/cgc", "HOME": str(home), "USERPROFILE": str(home)})
     assert out == str((home / "cgc").resolve())
@@ -111,20 +110,20 @@ def test_cache_dir_expands_home(tmp_path, monkeypatch):
     assert not (work / "~").exists()
 
 
-def test_set_cache_dir_updates_env_var(tmp_path, monkeypatch):
-    """set_cache_dir(path) records the resolved path in PYCLEBSCH_CACHE_DIR,
+def test_set_cgc_cache_dir_updates_env_var(tmp_path, monkeypatch):
+    """set_cgc_cache_dir(path) records the resolved path in PYCLEBSCH_CACHE_DIR,
     so worker processes started afterwards use it."""
     monkeypatch.delenv(CACHE_DIR_ENV_VAR, raising=False)
-    cgc.set_cache_dir(tmp_path / "disk")
+    cgc.set_cgc_cache_dir(tmp_path / "disk")
     assert os.environ[CACHE_DIR_ENV_VAR] == str((tmp_path / "disk").resolve())
 
 
-def test_set_cache_dir_none_removes_env_var(tmp_path, monkeypatch):
-    """set_cache_dir(None) removes PYCLEBSCH_CACHE_DIR."""
+def test_set_cgc_cache_dir_none_removes_env_var(tmp_path, monkeypatch):
+    """set_cgc_cache_dir(None) removes PYCLEBSCH_CACHE_DIR."""
     monkeypatch.delenv(CACHE_DIR_ENV_VAR, raising=False)
-    cgc.set_cache_dir(tmp_path / "disk")
-    cgc.set_cache_dir(None)
-    assert cgc.get_cache_dir() is None
+    cgc.set_cgc_cache_dir(tmp_path / "disk")
+    cgc.set_cgc_cache_dir(None)
+    assert cgc.get_cgc_cache_dir() is None
     assert CACHE_DIR_ENV_VAR not in os.environ
 
 
@@ -136,11 +135,11 @@ def test_nothing_written_by_default(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_set_cache_dir_custom(tmp_path):
-    """set_cache_dir() changes what get_cache_dir() returns."""
+def test_set_cgc_cache_dir_custom(tmp_path):
+    """set_cgc_cache_dir() changes what get_cgc_cache_dir() returns."""
     custom = tmp_path / "my_cache"
-    cgc.set_cache_dir(custom)
-    assert cgc.get_cache_dir() == custom.resolve()
+    cgc.set_cgc_cache_dir(custom)
+    assert cgc.get_cgc_cache_dir() == custom.resolve()
 
 
 # --- Correctness regression tests ---
@@ -157,10 +156,10 @@ def test_cgc_correctness_3x3bar():
 
 # --- Input types ---
 
-def _product_dirs(cache: Path) -> set[Path]:
+def _product_dirs(cache_dir: Path) -> set[Path]:
     """Directories that directly contain cache files, wherever they sit
     below the cache root."""
-    return {f.parent for f in cache.rglob("*") if f.is_file()}
+    return {f.parent for f in cache_dir.rglob("*") if f.is_file()}
 
 
 def test_numpy_and_int_iweights_share_entry(tmp_path):
@@ -168,13 +167,13 @@ def test_numpy_and_int_iweights_share_entry(tmp_path):
     results carry plain-int sum-irrep keys."""
     import numpy as np
 
-    cache = tmp_path / "CGC_Data"
-    cgc.set_cache_dir(cache)
+    cache_dir = tmp_path / "CGC_Data"
+    cgc.set_cgc_cache_dir(cache_dir)
     int_result = cgc.calc_cgcs([(1, 0, 0), (1, 1, 0)])
-    before = cgc.cache_stats()
+    before = cgc.cgc_cache_stats()
     numpy_result = cgc.calc_cgcs([tuple(np.array([1, 0, 0])), tuple(np.array([1, 1, 0]))])
     assert _stats_since(before)["computed"] == 0
-    assert len(_product_dirs(cache)) == 1
+    assert len(_product_dirs(cache_dir)) == 1
     assert numpy_result == int_result
     assert all(type(entry) is int for key in numpy_result for entry in key)
 
@@ -182,14 +181,14 @@ def test_numpy_and_int_iweights_share_entry(tmp_path):
 def test_float_iweights_rejected_without_side_effects(tmp_path, monkeypatch):
     """Float i-weights raise TypeError before anything is written, either in
     the configured cache directory or in the working directory."""
-    cache = tmp_path / "disk"
+    cache_dir = tmp_path / "disk"
     work = tmp_path / "cwd"
     work.mkdir()
     monkeypatch.chdir(work)
-    cgc.set_cache_dir(cache)
+    cgc.set_cgc_cache_dir(cache_dir)
     with pytest.raises(TypeError):
         cgc.calc_cgcs([(1.0, 0.0, 0.0), (1.0, 1.0, 0.0)])
-    assert not cache.exists() or not any(cache.iterdir())
+    assert not cache_dir.exists() or not any(cache_dir.iterdir())
     assert not any(work.iterdir())
 
 
@@ -214,11 +213,10 @@ L1_DISTINCT_TABLES = 19
 RECOMPUTE_TOL = 1e-12
 
 
-def _stats_since(before: "cgc_cache.CacheStats") -> dict[str, int]:
+def _stats_since(before: dict[str, int]) -> dict[str, int]:
     """Change in every cache counter since the snapshot before."""
-    now = cgc.cache_stats()
-    return {f.name: getattr(now, f.name) - getattr(before, f.name)
-            for f in dataclasses.fields(now)}
+    now = cgc.cgc_cache_stats()
+    return {key: now[key] - before[key] for key in now}
 
 
 def _max_abs_difference(a, b) -> float:
@@ -246,23 +244,23 @@ def _l1_matrix_elements() -> dict:
 def memory_limit_restored():
     """Remove any memory cap a test sets."""
     yield
-    cgc_cache.set_memory_cache_limit(None)
+    cache.set_cgc_memory_cache_limit(None)
 
 
 def test_memory_tier_computes_each_entry_once(tmp_path):
     """Each distinct table is computed once per process, however many
     calc_cgcs calls need it."""
-    cache = tmp_path / "CGC_Data"
-    cgc.set_cache_dir(cache)
-    before = cgc.cache_stats()
+    cache_dir = tmp_path / "CGC_Data"
+    cgc.set_cgc_cache_dir(cache_dir)
+    before = cgc.cgc_cache_stats()
     first = _l1_matrix_elements()
     first_run = _stats_since(before)
-    files = [f for f in cache.rglob("*") if f.is_file()]
+    files = [f for f in cache_dir.rglob("*") if f.is_file()]
     assert first_run["computed"] == len(files) == L1_DISTINCT_TABLES
     assert first_run["disk_writes"] == first_run["computed"]
     assert first_run["memory_hits"] > first_run["computed"]
 
-    before = cgc.cache_stats()
+    before = cgc.cgc_cache_stats()
     second = _l1_matrix_elements()
     second_run = _stats_since(before)
     assert second_run["computed"] == 0
@@ -274,7 +272,7 @@ def test_memory_tier_computes_each_entry_once(tmp_path):
 def test_memory_results_match_fresh_computation():
     """A result served from memory equals one computed after the memory tier
     is cleared."""
-    cgc.set_cache_dir(None)
+    cgc.set_cgc_cache_dir(None)
     products = [
         [(2, 1, 0), (2, 1, 0)],
         [(1, 0, 0), (1, 0, 0), (1, 0, 0)],
@@ -283,11 +281,11 @@ def test_memory_results_match_fresh_computation():
     ]
     for product in products:
         cgc.calc_cgcs(product)
-        before = cgc.cache_stats()
+        before = cgc.cgc_cache_stats()
         cached = cgc.calc_cgcs(product)
         assert _stats_since(before)["computed"] == 0
         cgc.clear_memory_cache()
-        before = cgc.cache_stats()
+        before = cgc.cgc_cache_stats()
         fresh = cgc.calc_cgcs(product)
         assert _stats_since(before)["computed"] > 0
         assert _max_abs_difference(cached, fresh) <= RECOMPUTE_TOL
@@ -306,7 +304,7 @@ def _vandalize(result) -> None:
 def test_calc_cgcs_results_do_not_alias_cache():
     """Mutating anything calc_cgcs returns leaves later results unchanged,
     for every call form that returns a dict."""
-    cgc.set_cache_dir(None)
+    cgc.set_cgc_cache_dir(None)
     product, sum_irrep, copy_idx, state = [(2, 1, 0), (2, 1, 0)], (2, 1, 0), 2, 3
     call_forms = {
         "all irreps": lambda: cgc.calc_cgcs(product),
@@ -327,40 +325,40 @@ def test_lower_level_functions_not_public():
     assert not hasattr(cgc, "calc_lower_weight_cgcs")
 
 
-def test_set_cache_dir_clears_memory(tmp_path):
+def test_set_cgc_cache_dir_clears_memory(tmp_path):
     """After switching directories, tables are written to the new one rather
     than served from memory."""
-    cgc.set_cache_dir(tmp_path / "first")
+    cgc.set_cgc_cache_dir(tmp_path / "first")
     assert cgc.check_cgcs([(2, 1, 0), (2, 1, 0)])
-    cgc.set_cache_dir(tmp_path / "second")
+    cgc.set_cgc_cache_dir(tmp_path / "second")
     assert cgc.check_cgcs([(2, 1, 0), (2, 1, 0)])
     assert any(f.is_file() for f in (tmp_path / "second").rglob("*"))
 
 
-def _synthetic_key(label: int) -> "cgc_cache.CacheKey":
+def _synthetic_key(label: int) -> "cache._CGCCacheKey":
     """A distinct key per label; the tables stored under it are synthetic."""
-    return cgc_cache.CacheKey.lower([(label, 0, 0), (label, 0, 0)], (2 * label, 0, 0), 1, EPS)
+    return cache._CGCCacheKey.lower([(label, 0, 0), (label, 0, 0)], (2 * label, 0, 0), 1, EPS)
 
 
 def test_memory_limit_evicts_least_recently_used(memory_limit_restored):
     """With a cap of 2, the least recently used entry is evicted, and a later
     request for it recomputes rather than serving anything stale."""
-    cgc.set_cache_dir(None)
-    cgc_cache.set_memory_cache_limit(2)
+    cgc.set_cgc_cache_dir(None)
+    cache.set_cgc_memory_cache_limit(2)
     computations = Counter()
 
     def get(label: int):
         def compute():
             computations[label] += 1
             return {0: {(0, 0): float(label)}}
-        return cgc_cache._cache.get_or_compute(_synthetic_key(label), compute)
+        return cache._cgc_cache.get_or_compute(_synthetic_key(label), compute)
 
-    before = cgc.cache_stats()
+    before = cgc.cgc_cache_stats()
     get(1)
     get(2)
     get(1)          # hit; 1 becomes the most recently used entry
     get(3)          # evicts 2, the least recently used
-    assert len(cgc_cache._cache._memory) == 2
+    assert len(cache._cgc_cache._memory) == 2
     assert _stats_since(before)["evictions"] == 1
     assert get(1) == {0: {(0, 0): 1.0}}
     assert computations[1] == 1
@@ -370,12 +368,12 @@ def test_memory_limit_evicts_least_recently_used(memory_limit_restored):
 
 def test_memory_limit_results_unchanged(memory_limit_restored):
     """L1 matrix elements with a small cap equal those with no cap."""
-    cgc.set_cache_dir(None)
-    cgc_cache.set_memory_cache_limit(3)
-    before = cgc.cache_stats()
+    cgc.set_cgc_cache_dir(None)
+    cache.set_cgc_memory_cache_limit(3)
+    before = cgc.cgc_cache_stats()
     capped = _l1_matrix_elements()
     assert _stats_since(before)["evictions"] > 0
-    cgc_cache.set_memory_cache_limit(None)
+    cache.set_cgc_memory_cache_limit(None)
     cgc.clear_memory_cache()
     uncapped = _l1_matrix_elements()
     assert _max_abs_difference(capped, uncapped) <= RECOMPUTE_TOL
@@ -383,11 +381,11 @@ def test_memory_limit_results_unchanged(memory_limit_restored):
 
 def test_memory_limit_rejects_invalid_values(memory_limit_restored):
     """The cap must be None or an integer of at least 1."""
-    cgc_cache.set_memory_cache_limit(5)
+    cache.set_cgc_memory_cache_limit(5)
     for invalid in (0, -1, 2.5):
         with pytest.raises(ValueError):
-            cgc_cache.set_memory_cache_limit(invalid)
-    assert cgc_cache._cache.max_memory_entries == 5
+            cache.set_cgc_memory_cache_limit(invalid)
+    assert cache._cgc_cache.max_memory_entries == 5
 
 
 # --- Disk tier ---
@@ -397,25 +395,25 @@ OCTET_PRODUCT = [(1, 0, 0), (1, 1, 0)]
 OCTET = (2, 1, 0)
 
 
-def _entry_files(cache: Path) -> list[Path]:
+def _entry_files(cache_dir: Path) -> list[Path]:
     """Every file below the cache root."""
-    return sorted(f for f in cache.rglob("*") if f.is_file())
+    return sorted(f for f in cache_dir.rglob("*") if f.is_file())
 
 
 def _octet_lower_path() -> Path:
     """Where the lower-weight table of copy 1 of the octet is stored."""
-    key = cgc_cache.CacheKey.lower(OCTET_PRODUCT, OCTET, 1, cgc.EPS)
-    return cgc_cache._cache._entry_path(key)
+    key = cache._CGCCacheKey.lower(OCTET_PRODUCT, OCTET, 1, cgc.EPS)
+    return cache._cgc_cache._entry_path(key)
 
 
 def _fresh_octet() -> dict:
     """The octet's CGCs computed with no cache at all."""
-    original = cgc.get_cache_dir()
-    cgc.set_cache_dir(None)
+    original = cgc.get_cgc_cache_dir()
+    cgc.set_cgc_cache_dir(None)
     try:
         return cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
     finally:
-        cgc.set_cache_dir(original)
+        cgc.set_cgc_cache_dir(original)
 
 
 def _load_envelope(path: Path) -> dict:
@@ -431,21 +429,21 @@ def _dump_envelope(path: Path, envelope: dict) -> None:
 def test_disk_entries_written_under_version_namespace(tmp_path):
     """Every entry lives under v<CGC_CACHE_VERSION>/, and highest-weight
     tables are among them."""
-    cache = tmp_path / "CGC_Data"
-    cgc.set_cache_dir(cache)
+    cache_dir = tmp_path / "CGC_Data"
+    cgc.set_cgc_cache_dir(cache_dir)
     cgc.calc_cgcs([(2, 1, 0), (2, 1, 0)])
-    files = _entry_files(cache)
+    files = _entry_files(cache_dir)
     assert any("highest_weight_CGC" in f.name for f in files)
-    assert all(f.relative_to(cache).parts[0] == f"v{cgc_cache.CGC_CACHE_VERSION}" for f in files)
+    assert all(f.relative_to(cache_dir).parts[0] == f"v{cache.CGC_CACHE_VERSION}" for f in files)
 
 
 def test_disk_entry_used_after_memory_clear(tmp_path):
     """With the memory tier cleared, entries are read back from disk rather
     than recomputed."""
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     first = cgc.calc_cgcs([(2, 1, 0), (2, 1, 0)])
     cgc.clear_memory_cache()
-    before = cgc.cache_stats()
+    before = cgc.cgc_cache_stats()
     second = cgc.calc_cgcs([(2, 1, 0), (2, 1, 0)])
     delta = _stats_since(before)
     assert delta["disk_hits"] > 0
@@ -457,78 +455,78 @@ def test_legacy_layout_entries_are_ignored(tmp_path):
     """An entry at the unversioned layout of pyclebsch <= 0.1 is never read,
     even when it sits in the configured directory."""
     fresh = _fresh_octet()
-    cache = tmp_path / "CGC_Data"
-    legacy = cache / "[(1, 0, 0), (1, 1, 0)]" / "lower_weight_CGC_((2, 1, 0), 1)"
+    cache_dir = tmp_path / "CGC_Data"
+    legacy = cache_dir / "[(1, 0, 0), (1, 1, 0)]" / "lower_weight_CGC_((2, 1, 0), 1)"
     legacy.parent.mkdir(parents=True)
     altered = {state: {ps: 0.5 for ps in coefficients} for state, coefficients in fresh.items()}
     _dump_envelope(legacy, altered)
-    cgc.set_cache_dir(cache)
+    cgc.set_cgc_cache_dir(cache_dir)
     assert _max_abs_difference(cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1), fresh) <= RECOMPUTE_TOL
 
 
 def test_previous_version_entries_are_ignored(tmp_path, monkeypatch):
     """After a CGC_CACHE_VERSION bump, entries written under the old version
     are not read, and new ones are written under the new version."""
-    cache = tmp_path / "CGC_Data"
-    cgc.set_cache_dir(cache)
+    cache_dir = tmp_path / "CGC_Data"
+    cgc.set_cgc_cache_dir(cache_dir)
     cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
-    new_version = cgc_cache.CGC_CACHE_VERSION + 1
-    monkeypatch.setattr(cgc_cache, "CGC_CACHE_VERSION", new_version)
+    new_version = cache.CGC_CACHE_VERSION + 1
+    monkeypatch.setattr(cache, "CGC_CACHE_VERSION", new_version)
     cgc.clear_memory_cache()
-    before = cgc.cache_stats()
+    before = cgc.cgc_cache_stats()
     cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
     delta = _stats_since(before)
     assert delta["disk_hits"] == 0
     assert delta["computed"] > 0
-    assert any(f.relative_to(cache).parts[0] == f"v{new_version}" for f in _entry_files(cache))
+    assert any(f.relative_to(cache_dir).parts[0] == f"v{new_version}" for f in _entry_files(cache_dir))
 
 
 def test_format_version_mismatch_is_rejected(tmp_path):
     """An entry whose envelope format differs is rejected with a warning,
     recomputed, and rewritten."""
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
     path = _octet_lower_path()
     envelope = _load_envelope(path)
-    envelope["format_version"] = cgc_cache.CACHE_FORMAT_VERSION + 1
+    envelope["format_version"] = cache.CACHE_FORMAT_VERSION + 1
     _dump_envelope(path, envelope)
     cgc.clear_memory_cache()
-    before = cgc.cache_stats()
-    with pytest.warns(cgc_cache.CGCCacheWarning):
+    before = cgc.cgc_cache_stats()
+    with pytest.warns(cache.CGCCacheWarning):
         cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
     delta = _stats_since(before)
     assert delta["disk_rejected"] == 1
     assert delta["computed"] == 1
-    assert _load_envelope(path)["format_version"] == cgc_cache.CACHE_FORMAT_VERSION
+    assert _load_envelope(path)["format_version"] == cache.CACHE_FORMAT_VERSION
 
 
 def test_entry_with_mismatched_key_is_rejected(tmp_path):
     """A valid entry copied onto another key's path is rejected with a
     warning, and the right table is computed and written there."""
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     fresh = cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
-    singlet_key = cgc_cache.CacheKey.lower(OCTET_PRODUCT, (0, 0, 0), 1, cgc.EPS)
+    singlet_key = cache._CGCCacheKey.lower(OCTET_PRODUCT, (0, 0, 0), 1, cgc.EPS)
     cgc.calc_cgcs(OCTET_PRODUCT, (0, 0, 0), 1)
     octet_path = _octet_lower_path()
-    octet_path.write_bytes(cgc_cache._cache._entry_path(singlet_key).read_bytes())
+    octet_path.write_bytes(cache._cgc_cache._entry_path(singlet_key).read_bytes())
     cgc.clear_memory_cache()
-    with pytest.warns(cgc_cache.CGCCacheWarning):
+    with pytest.warns(cache.CGCCacheWarning):
         result = cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
     assert _max_abs_difference(result, fresh) <= RECOMPUTE_TOL
-    octet_key = cgc_cache.CacheKey.lower(OCTET_PRODUCT, OCTET, 1, cgc.EPS)
+    octet_key = cache._CGCCacheKey.lower(OCTET_PRODUCT, OCTET, 1, cgc.EPS)
     assert _load_envelope(octet_path)["key"] == octet_key.as_header()
 
 
 def test_eps_change_invalidates(tmp_path, monkeypatch):
     """Changing cgc.EPS changes the key, so neither the memory entry nor the
     disk entry written under the old value is served."""
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
     path = _octet_lower_path()
     new_eps = cgc.EPS / 10
     monkeypatch.setattr(cgc, "EPS", new_eps)
-    before = cgc.cache_stats()
-    with pytest.warns(cgc_cache.CGCCacheWarning):
+    before = cgc.cgc_cache_stats()
+    with pytest.warns(cache.CGCCacheWarning):
         cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
     delta = _stats_since(before)
     assert delta["memory_hits"] == 0
@@ -542,39 +540,39 @@ def test_corrupt_entry_is_recovered(tmp_path, damage):
     """An empty or truncated entry is rejected with a warning, the correct
     values are returned, and a valid entry replaces it."""
     fresh = _fresh_octet()
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
     path = _octet_lower_path()
     contents = path.read_bytes()
     path.write_bytes(b"" if damage == "empty" else contents[: len(contents) // 2])
     cgc.clear_memory_cache()
-    with pytest.warns(cgc_cache.CGCCacheWarning):
+    with pytest.warns(cache.CGCCacheWarning):
         result = cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
     assert _max_abs_difference(result, fresh) <= RECOMPUTE_TOL
     envelope = _load_envelope(path)
-    assert envelope["key"] == cgc_cache.CacheKey.lower(OCTET_PRODUCT, OCTET, 1, cgc.EPS).as_header()
+    assert envelope["key"] == cache._CGCCacheKey.lower(OCTET_PRODUCT, OCTET, 1, cgc.EPS).as_header()
 
 
 def test_failed_write_leaves_no_partial_file(tmp_path, monkeypatch):
     """If writing an entry fails part way, neither the entry nor a temporary
     file is left behind."""
-    cache = tmp_path / "CGC_Data"
-    cgc.set_cache_dir(cache)
+    cache_dir = tmp_path / "CGC_Data"
+    cgc.set_cgc_cache_dir(cache_dir)
 
     def failing_dump(obj, fp, *args, **kwargs):
         fp.write(b"partial")
         raise RuntimeError("simulated failure while writing")
 
-    monkeypatch.setattr(cgc_cache.pickle, "dump", failing_dump)
+    monkeypatch.setattr(cache.pickle, "dump", failing_dump)
     with pytest.raises(RuntimeError):
         cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
-    assert _entry_files(cache) == []
+    assert _entry_files(cache_dir) == []
 
 
 def test_disk_entry_header_records_provenance(tmp_path):
     """Every entry records the pyclebsch version and commit; in this editable
     install the commit is unknown."""
-    cgc.set_cache_dir(tmp_path / "CGC_Data")
+    cgc.set_cgc_cache_dir(tmp_path / "CGC_Data")
     cgc.calc_cgcs(OCTET_PRODUCT, OCTET, 1)
     envelope = _load_envelope(_octet_lower_path())
     assert envelope["pyclebsch_version"] is None or isinstance(envelope["pyclebsch_version"], str)
@@ -605,24 +603,24 @@ def test_installed_commit_handles_all_install_types(monkeypatch):
     }
     for label, (direct_url, expected) in cases.items():
         monkeypatch.setattr(metadata, "distribution", lambda name, d=direct_url: _FakeDistribution(d))
-        cgc_cache._installed_commit.cache_clear()
-        assert cgc_cache._installed_commit() == expected, label
+        cache._installed_commit.cache_clear()
+        assert cache._installed_commit() == expected, label
 
     def not_installed(name):
         raise metadata.PackageNotFoundError(name)
 
     monkeypatch.setattr(metadata, "distribution", not_installed)
-    cgc_cache._installed_commit.cache_clear()
-    assert cgc_cache._installed_commit() is None
-    cgc_cache._installed_commit.cache_clear()
+    cache._installed_commit.cache_clear()
+    assert cache._installed_commit() is None
+    cache._installed_commit.cache_clear()
 
 
 def test_long_product_uses_hashed_name():
     """A name that would exceed MAX_ENTRY_NAME_BYTES is replaced by a hash,
     and short names stay readable."""
-    long_key = cgc_cache.CacheKey.lower([(1, 0, 0)] * 30, (30, 0, 0), 1, EPS)
+    long_key = cache._CGCCacheKey.lower([(1, 0, 0)] * 30, (30, 0, 0), 1, EPS)
     long_path = long_key.relative_path()
-    assert all(len(part.encode()) <= cgc_cache.MAX_ENTRY_NAME_BYTES for part in long_path.parts)
+    assert all(len(part.encode()) <= cache.MAX_ENTRY_NAME_BYTES for part in long_path.parts)
     assert long_path.parts[0] != str(list(long_key.product))
-    short_key = cgc_cache.CacheKey.lower(OCTET_PRODUCT, OCTET, 1, EPS)
+    short_key = cache._CGCCacheKey.lower(OCTET_PRODUCT, OCTET, 1, EPS)
     assert short_key.relative_path() == Path("[(1, 0, 0), (1, 1, 0)]") / "lower_weight_CGC_((2, 1, 0), 1)"

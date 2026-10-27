@@ -2,12 +2,14 @@
 LATTICE DATA
 """
 
+import functools
 from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
 from tqdm import tqdm
 from .helpers import *
+from ..cache import _plaquette_cache
 from ..cgc import calc_cgcs
 from collections import defaultdict
 from ..su_n_operators import calc_casimir, find_direct_sum, IrrepWeight
@@ -591,3 +593,94 @@ def compute_plaquette_signature(
 
     signature = (plane, sites_with_half_links)
     return signature
+
+def plaquettes_by_signature(lattice: LatticeDef) -> dict[PlaquetteSignature, list[PlaquetteAddress]]:
+    """
+    Every plaquette of the lattice, grouped by signature (see compute_plaquette_signature).
+
+    Each list of plaquette addresses is sorted, and the groups are ordered by
+    their smallest addresses.
+
+    Within one lattice, plaquettes with the same signature have the same
+    physical plaquette states and the same matrix elements. Those depend on a
+    plaquette's plane, the half-links at its corners, its unique controls,
+    and inputs shared by the whole lattice (N, the truncation, FORDER, EPS,
+    PRES), but not on its position. The signature holds the plane and the
+    half-links, and it also determines the unique controls, for this reason.
+    Controls at two corners of a plaquette are the same link only along an
+    edge of the plaquette whose axis is periodic with length 2: in plane
+    (1, 2), the -1 control of corner 1 starts at s1 - e1 and the +1 control
+    of corner 2 at s1 + e1, the same site exactly when axis 1 is periodic
+    with length 2. Which corners have such controls is in the signature, and
+    the length and periodicity of an axis are the same for every plaquette.
+    The two controls of one corner along an axis normal to the plane start at
+    s and s - e, which coincide only on a periodic axis of length 1. The
+    grouping relies on sites_links_and_plaquettes refusing such axes.
+    """
+    groups: dict[PlaquetteSignature, list[PlaquetteAddress]] = defaultdict(list)
+    for plaquette in sorted(lattice.plaquettes):
+        groups[compute_plaquette_signature(plaquette, lattice)].append(plaquette)
+    return dict(groups)
+
+def _physical_plaquette_states_cache_key(
+        lattice: LatticeDef, plaquette: PlaquetteAddress, N: int, truncation_mode: str, cutoff: float
+) -> tuple:
+    """
+    The key under which the physical states of plaquette are cached (in
+    pyclebsch.cache._PlaquetteCache.physical_states): (signature, unique
+    controls, N, truncation mode, cutoff, FORDER), with every list turned
+    into a tuple so that the key is hashable.
+
+    The key leaves out the plaquette's position and the lattice's size and
+    boundary conditions: those affect the states only through the signature
+    (an open boundary removes half-links) and the unique controls (a
+    periodic axis of length 2 makes controls coincide). The unique controls
+    are needed across lattices: every plaquette of the periodic 2x2x2 and
+    3x3x3 lattices has the same signature, but on 2x2x2 some of its controls
+    coincide.
+    """
+    _, _, _, unique_controls = lattice.plaquettes[plaquette]
+    return (
+        compute_plaquette_signature(plaquette, lattice),
+        tuple(tuple(indices) for indices in unique_controls),
+        N,
+        truncation_mode,
+        cutoff,
+        tuple(lattice.FORDER),
+    )
+
+def physical_plaquette_states_by_signature(
+        lattice: LatticeDef, N: int, truncation_mode: str, cutoff: float
+) -> dict[PlaquetteSignature, list[PlaquetteState]]:
+    """
+    physical_plaquette_states for each plaquette signature of the lattice,
+    computed once per signature (see plaquettes_by_signature for why that
+    suffices).
+
+    The singlets are those of irreps_and_singlets(N, lattice.sites,
+    truncation_mode, cutoff), and FORDER is the lattice's. Each signature's
+    states are computed on the smallest plaquette address with that
+    signature, and hold for every plaquette with it.
+
+    The states are cached in memory across calls, keyed by (signature,
+    unique controls, N, truncation mode, cutoff, FORDER);
+    _physical_plaquette_states_cache_key says why. clear_memory_cache()
+    clears the cache and set_physical_plaquette_states_cache_limit() caps
+    it. Each returned list is a new copy of the cached one, so the caller
+    may modify it. The copy is shallow; the states in it are tuples and
+    cannot be modified.
+    """
+    # irreps_and_singlets is only needed, and only computed, on a cache miss.
+    truncation_data = functools.cache(lambda: irreps_and_singlets(N, lattice.sites, truncation_mode, cutoff))
+
+    def compute(plaquette: PlaquetteAddress) -> list[PlaquetteState]:
+        _, singlets, _ = truncation_data()
+        return physical_plaquette_states(plaquette, lattice.sites, lattice.plaquettes, singlets, lattice.FORDER)
+
+    states = {}
+    for signature, plaquettes in plaquettes_by_signature(lattice).items():
+        states[signature] = list(_plaquette_cache.physical_states.get_or_compute(
+            _physical_plaquette_states_cache_key(lattice, plaquettes[0], N, truncation_mode, cutoff),
+            functools.partial(compute, plaquettes[0]),
+        ))
+    return states

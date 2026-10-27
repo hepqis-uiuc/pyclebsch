@@ -2,14 +2,24 @@
 PLAQUETTE MATRIX ELEMENTS
 """
 
+import functools
 import numpy as np
 from tqdm import tqdm
-from ..cache import pool_kwargs
+from ..cache import _plaquette_cache, pool_kwargs
 from ..cgc import calc_cgcs
 from itertools import product
 from multiprocessing import Pool
 from collections import defaultdict
 from .helpers import conjugate_iweight
+from .lattice_data import (
+    LatticeDef,
+    PlaquetteAddress,
+    PlaquetteSignature,
+    PlaquetteState,
+    _physical_plaquette_states_cache_key,
+    irreps_and_singlets,
+    plaquettes_by_signature,
+)
 from ..su_n_operators import calc_dimension, find_direct_sum
 
 def plaquette_site_factor(N, s, initial, final, URij, ij_idxs, ctrl_irreps, conj_dict, EPS):
@@ -507,4 +517,58 @@ def calc_plaquette_elements(N, P, sites, plaquettes, truncation_irreps, singlets
 
     # Combine all matrix element dictionaries in res.
     matrix_elements = {k:v for d in res for k,v in d.items()}
+    return matrix_elements
+
+def _plaquette_matrix_elements_cache_key(
+        lattice: LatticeDef, plaquette: PlaquetteAddress, N: int, truncation_mode: str, cutoff: float,
+        EPS: float, PRES: int
+) -> tuple:
+    """
+    The key under which the matrix elements of plaquette are cached (in
+    pyclebsch.cache._PlaquetteCache.matrix_elements): the key of its physical
+    states (see _physical_plaquette_states_cache_key in lattice_data), then
+    EPS and PRES. EPS (the threshold below which a product of site factors
+    is dropped) and PRES (the number of decimals every value is rounded to)
+    change the matrix elements but not which physical states exist, which
+    is why only this key has them.
+    """
+    return _physical_plaquette_states_cache_key(lattice, plaquette, N, truncation_mode, cutoff) + (EPS, PRES)
+
+def plaquette_matrix_elements_by_signature(
+        lattice: LatticeDef, N: int, truncation_mode: str, cutoff: float, EPS: float, PRES: int,
+        parallelize: bool = True
+) -> dict[PlaquetteSignature, dict[tuple[PlaquetteState, PlaquetteState], float]]:
+    """
+    calc_plaquette_elements (the plaquette matrix elements) for each
+    plaquette signature of the lattice, computed once per signature (see
+    plaquettes_by_signature in lattice_data for why that suffices).
+
+    The truncation irreps, singlets and conjugation data are those of
+    irreps_and_singlets(N, lattice.sites, truncation_mode, cutoff), and FORDER
+    is the lattice's. Each signature's matrix elements are computed on the
+    smallest plaquette address with that signature, and hold for every
+    plaquette with it.
+
+    The matrix elements are cached in memory across calls, keyed by
+    (signature, unique controls, N, truncation mode, cutoff, FORDER, EPS,
+    PRES); _plaquette_matrix_elements_cache_key says why. clear_memory_cache()
+    clears the cache and set_plaquette_matrix_elements_cache_limit() caps
+    it. Each returned dict is a new copy of the cached one, so the caller may
+    modify it. The copy is shallow; its keys are tuples and its values
+    floats, neither of which can be modified.
+    """
+    # irreps_and_singlets is only needed, and only computed, on a cache miss.
+    truncation_data = functools.cache(lambda: irreps_and_singlets(N, lattice.sites, truncation_mode, cutoff))
+
+    def compute(P):
+        truncation_irreps, singlets, conj_dict = truncation_data()
+        return calc_plaquette_elements(N, P, lattice.sites, lattice.plaquettes, truncation_irreps, singlets,
+                                       conj_dict, lattice.FORDER, EPS, PRES, parallelize)
+
+    matrix_elements = {}
+    for signature, plaquettes in plaquettes_by_signature(lattice).items():
+        matrix_elements[signature] = dict(_plaquette_cache.matrix_elements.get_or_compute(
+            _plaquette_matrix_elements_cache_key(lattice, plaquettes[0], N, truncation_mode, cutoff, EPS, PRES),
+            functools.partial(compute, plaquettes[0]),
+        ))
     return matrix_elements

@@ -40,10 +40,10 @@ CUTOFF = 1
 @pytest.fixture(scope="module")
 def cache_dir(tmp_path_factory):
     """Redirect the on-disk CGC cache to a tmp dir for this module."""
-    original = cgc.get_cache_dir()
-    cgc.set_cache_dir(tmp_path_factory.mktemp("CGC_Data"))
+    original = cgc.get_cgc_cache_dir()
+    cgc.set_cgc_cache_dir(tmp_path_factory.mktemp("CGC_Data"))
     yield
-    cgc.set_cache_dir(original)
+    cgc.set_cgc_cache_dir(original)
 
 
 @pytest.fixture(scope="module")
