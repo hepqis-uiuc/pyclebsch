@@ -13,11 +13,12 @@ this module's docstrings ("~Eqs. (33)-(34)", "~Pg. 14") refer.
 - Added in pyclebsch (described in P. Balaji et al., arXiv:2509.25865,
   Appendix C): where the product repeats an irrep, the highest-weight
   states of its copies are chosen to transform under irreps of the
-  symmetric group that permutes the repeated factors (see "Why the copies
-  are chosen this way" below). su_n_operators.find_symmetry_direct_sum gives
-  how many copies transform under each irrep of the symmetric group, from
-  plethysms computed as in GroupMath (R. M. Fonseca, arXiv:2011.01764). The
-  Young projection operators of J. Alcock-Zeilinger et al., arXiv:1610.10088
+  symmetric group that permutes the repeated factors (what this choice
+  achieves is explained below, after "Labels").
+  su_n_operators.find_symmetry_direct_sum gives how many copies transform
+  under each irrep of the symmetric group, from plethysms computed as in
+  GroupMath (R. M. Fonseca, arXiv:2011.01764). The Young projection
+  operators of J. Alcock-Zeilinger et al., arXiv:1610.10088
   (symmetric_group.young_symmetrizer), then pick out those copies.
 
 Labels: irreps are i-weights (IrrepWeight, from su_n_operators), and the
@@ -36,9 +37,9 @@ the factors in the order calc_cgcs sorts them into, which can differ from
 the order they are given in. A CGC smaller than EPS in magnitude counts as
 zero and is left out.
 
-Why the copies are chosen this way: when a tensor product repeats an irrep,
-an irrep can appear in its decomposition more than once, and its copies are
-then unique only up to a rotation among them. Choosing copies with definite
+When a tensor product repeats an irrep, an irrep can appear in its
+decomposition more than once, and its copies are then unique only up to a
+rotation among them. Choosing copies with definite
 symmetry under exchange of the repeated factors removes much of that
 arbitrariness, and gives the copies a meaning. For example, the adjoint
 appears twice in 8 x 8 of SU(3): calc_cgcs returns as copy 1 the one
