@@ -1,5 +1,42 @@
 """
-PLAQUETTE MATRIX ELEMENTS
+Matrix elements of the plaquette operator between physical plaquette states.
+
+The plaquette operator of a plaquette is its Wilson loop in the fundamental
+representation of SU(N), taken around the plaquette in the direction of
+LatticeDef.plaquette_boundaries (l1 + l2 - l3 - l4). Its matrix elements
+between the plaquette's physical states (PlaquetteState, from lattice_data)
+factor into one site factor per corner of the plaquette, each a sum of
+products of Clebsch-Gordan coefficients (calc_cgcs) at that corner, times
+the square root of a ratio of products of irrep dimensions. Site factors are
+defined in P. Balaji et al., arXiv:2503.08866, and the formulas used here
+are written out in P. Balaji et al., arXiv:2509.25865.
+- calc_plaquette_site_factors computes the site factors of a plaquette
+  (SiteFactors), each the amplitude of one transition at one corner
+  (SiteTransition), by Eq. (5) of arXiv:2509.25865.
+- calc_plaquette_elements multiplies the site factors that agree on the
+  irreps of the links their corners share, by Eq. (4) of arXiv:2509.25865,
+  and returns
+  {(final state, initial state): matrix element}. Contributions smaller than
+  EPS in magnitude are dropped, and each value is rounded to PRES decimal
+  places. With parallelize=True, both functions spread the work over a
+  multiprocessing.Pool.
+- plaquette_matrix_elements_by_signature computes the matrix elements once
+  for each plaquette signature of a lattice (see plaquettes_by_signature in
+  lattice_data) and caches them in memory (see pyclebsch.cache).
+calc_plaquette_site_factors and calc_plaquette_elements take the irreps,
+singlets and conjugate states that irreps_and_singlets (in lattice_data)
+returns.
+
+For example, on the lattice of lattice_data's example,
+
+    matrix_elements = plaquette_matrix_elements_by_signature(
+        lattice, N=3, truncation_mode="T", cutoff=1, EPS=1e-10, PRES=10
+    )
+
+maps each of the two signatures to its 9 nonzero matrix elements, among
+them 1.0 from the state with the trivial irrep on every link to the state
+with the fundamental irrep (1, 0, 0) on l1 and l2 and the antifundamental
+(1, 1, 0) on l3 and l4.
 """
 
 import functools
@@ -60,7 +97,9 @@ def plaquette_site_factor(
         EPS: float,
 ) -> tuple[float, int, SiteTransition] | Literal[0]:
     """
-    Calculates a site factor. The inputs are as follows.
+    Calculates a site factor.
+    Eq. (5) of arXiv:2509.25865
+    The inputs are as follows.
     s -> The plaquette site number. Different sites require different conjugations.
     initial/final -> initial/final singlet data given as
     (ith plaquette link irrep, jth plaquette link irrep, FORDERd irreps, multiplicity index).
@@ -357,6 +396,7 @@ def glue_plaquette_site_factors(s1, info, site_factors, ctrl_idxs, BCs, dims, EP
     is a dictionary of pre-computed irrep dimensions to avoid repeated calculations.
     matrix elements are returned as a dictionary of the form:
     {(final plaquette state, initial plaquette state): matrix element value}.
+    Eq. (4) of arXiv:2509.25865
     """
 
     # Unpack data

@@ -1,5 +1,13 @@
 """
-HELPER FUNCTIONS
+Functions on SU(N) irreps that the lattice code uses.
+
+- conjugate_iweight gives the i-weight of the conjugate irrep, for example
+  (1, 1, 0) for (1, 0, 0) in SU(3).
+- n_ality gives an irrep's charge under the center of SU(N).
+- get_irreps gives the irreps whose quadratic Casimir is at most a given
+  value, with their Casimirs; irreps_and_singlets (in lattice_data) uses it
+  for the "C" and "B" truncations.
+Irreps are labeled by i-weights (IrrepWeight, from su_n_operators).
 """
 
 import numpy as np

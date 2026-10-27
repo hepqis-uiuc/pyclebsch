@@ -1,5 +1,67 @@
 """
-LATTICE DATA
+The geometry of a cubic lattice, and the physical states of its plaquettes.
+
+Geometry. LatticeDef(num_sites, PBCs, FORDER) describes a lattice with three
+axes, numbered 1, 2 and 3, each open or periodic. A lattice with fewer than
+three dimensions has a single site along each axis it does not use, and that
+axis must be open: num_sites=(3, 2, 1) with PBCs=(False, False, False) is a
+3x2 lattice along axes 1 and 2. A LatticeDef cannot be modified. It provides
+the lattice's sites, links, plaquettes and cubes, and, with orientation signs,
+the boundary of each plaquette and cube and the coboundary of each link and
+plaquette. sites_links_and_plaquettes computes the sites, links and
+plaquettes without a LatticeDef. The conventions:
+- A site is a tuple of three coordinates, each counted from 0. A direction is
+  1, 2 or 3 for the positive direction along that axis, and -1, -2 or -3 for
+  the negative one.
+- A link's address (s, d) names the link from site s to its neighbor in the
+  positive direction d. The link has a half-link at each end: an outgoing
+  one at s, in direction d, and an incoming one at the neighbor, in
+  direction -d.
+- FORDER, a permutation of (1, 2, 3, -1, -2, -3), is a conventional order
+  of the half-links at every site (P. Balaji et al., arXiv:2509.25865). It
+  assigns each irrep in a site's singlet, and so in its Clebsch-Gordan
+  coefficients (calc_cgcs), to one of the site's links, which is otherwise
+  ambiguous when two links carry the same irrep. It also orders the control
+  links in a plaquette state.
+- A plaquette's address (s1, (i, j)), with i < j, names the plaquette in
+  plane (i, j) whose other corners are reached from s1 by steps in the
+  positive directions i and j, wrapping around on periodic axes.
+  PlaquetteGeometry labels its sites s1-s4 and its links l1-l4. The other
+  links at its sites are its control links.
+
+Physical plaquette states. Irreps of SU(N) are labeled by i-weights
+(IrrepWeight, from su_n_operators), and the basis states of an irrep are
+numbered as in calc_cgcs. irreps_and_singlets gives, for a truncation, the
+irreps allowed on links and the singlets that Gauss's law allows at a site
+where a given number of links meet. The truncation is a mode and a cutoff:
+mode "T" keeps the irreps whose i-weight has first entry at most the cutoff;
+mode "C" keeps the irreps whose quadratic Casimir is at most the cutoff;
+mode "B" keeps the same irreps as "C", and keeps only the singlets whose
+irreps have quadratic Casimirs that sum to at most the cutoff.
+physical_plaquette_states lists a plaquette's physical states: the irreps
+on its links and control links, and the multiplicity index of the singlet
+at each of its sites (numbered from 0; calc_cgcs's mult_idx, from 1, is one
+more), that together satisfy Gauss's law at all four sites
+(PlaquetteState).
+
+Within one lattice, plaquettes with the same signature
+(compute_plaquette_signature: the plane, and the half-links at each site)
+have the same physical states.
+plaquettes_by_signature groups a lattice's plaquettes by signature, and
+physical_plaquette_states_by_signature computes the states once per
+signature and caches them in memory (see pyclebsch.cache). For example,
+
+    lattice = LatticeDef(
+        num_sites=(3, 2, 1),
+        PBCs=(False, False, False),
+        FORDER=(1, 2, 3, -1, -2, -3),
+    )
+    states = physical_plaquette_states_by_signature(
+        lattice, N=3, truncation_mode="T", cutoff=1
+    )
+
+maps each of the two signatures of this lattice, one per plaquette, to its
+9 physical states.
 """
 
 import functools
@@ -490,17 +552,14 @@ def irreps_and_singlets(
 ) -> tuple[dict[int, list[IrrepWeight]], SiteSinglets, ConjugateStates]:
     """
     Sets up irreps and singlets of the truncated Hilbert space.
-    Irreps and singlets are returned as a dictionaries. Due to boundary
+
+    Returns (link_irreps, site_singlets, conj_dict). Due to boundary
     conditions, different sites' links and singlets may have different possible
-    irreps. Keys of these nested dictionaries are the number n of links that meet
-    at a site, which can range from 2 to 6.
-    Values of link_irreps are lists of irreps for a given n.
-    Values of site_singlets are nested dictionaries representing all possible
-    permutations of a singlet; they have the form
-    {control link irreps: {plaquette link irreps: multiplicity of singlet}}.
-    Additionally, a dictionary of irrep basis states and their conjugate states
-    along with associated phases are returned as conj_dict. It has the form
-    {irrep (R): {irrep basis state: (conjugate basis state from Rbar, phase)}}.
+    irreps, so link_irreps and site_singlets are keyed by the number n of links
+    that meet at a site (2 to 6 on a lattice with plaquettes).
+    link_irreps[n] lists the irreps that appear in at least one singlet at a
+    site where n links meet. site_singlets is a SiteSinglets and conj_dict a
+    ConjugateStates; the comments on those type aliases describe them.
     """
 
     # Check inputs
@@ -633,9 +692,10 @@ def physical_plaquette_states(
     # extends to. X and Y are tuples of irreps, where X+Y gives some permutation
     # of a distinct singlet S. G is the multiplicity of S. By Gauss' law, irreps
     # appearing in singlets are not necessarily the true irreps on the lattice.
-    # Outgoing/negative/left (half-)links are conjugated in singlets relative
-    # to the actual irrep on the link. This conjugation is accounted for and,
-    # as a result, "modified" singlets are pieced together through this function.
+    # Outgoing (positive-direction) half-links are conjugated in singlets
+    # relative to the actual irrep on the link. This conjugation is accounted
+    # for and, as a result, "modified" singlets are pieced together through
+    # this function.
     # i/j_idxs is used to ensure plaquette link irreps of the modified singlets
     # match, and i/j_ctrl_idxs as well as the BC booleans are used to check if
     # certain control link irreps match.

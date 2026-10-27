@@ -474,7 +474,8 @@ class _PlaquetteCache:
 
 
 def _envelope_mismatch(envelope: object, key: _CGCCacheKey) -> str | None:
-    """Why envelope cannot serve key, or None if it can."""
+    """The reason envelope cannot be used for key, as a message for the
+    warning that rejects it; None if it can be used."""
     if not isinstance(envelope, dict) or "data" not in envelope:
         return "not a cache entry envelope"
     if envelope.get("format_version") != CACHE_FORMAT_VERSION:

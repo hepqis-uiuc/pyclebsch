@@ -1,8 +1,29 @@
+"""
+Partitions and Young tableaux.
+
+A partition of n labels an irrep of S_n by the row lengths of its Young
+diagram (see the symmetric_group package). A YoungTableau fills the
+diagram's cells with 0, ..., n - 1, as a list of rows; it is standard when
+the entries increase along each row and down each column.
+- find_partitions(n) generates the partitions of n, by the accel_asc
+  algorithm of J. Kelleher et al., arXiv:0909.2331.
+- find_tableaux(partition) lists the standard Young tableaux of a shape, for
+  example [[0, 1], [2]] and [[0, 2], [1]] for [2, 1]. It is adapted from
+  GroupMath (R. M. Fonseca, arXiv:2011.01764).
+- partition_to_sequence and sequence_to_partition convert a partition to and
+  from a sequence of 1s and 0s that traces the boundary of its Young
+  diagram. _rim_hooks uses that sequence to find the rim hooks that the
+  Murnaghan-Nakayama rule for characters of S_n removes (plethysm_utils).
+The other functions are internal: conjugate partitions, hook lengths, and
+the permutations that preserve the rows or the columns of a tableau, which
+young_symmetrizer uses.
+"""
+
 from itertools import product, permutations
 from collections.abc import Generator
 
 
-YoungTableau = list[list[int]]
+type YoungTableau = list[list[int]]
 
 def _conjugate_partition(partition):
     """Computes a conjugate partition (the partition corresponding to the
