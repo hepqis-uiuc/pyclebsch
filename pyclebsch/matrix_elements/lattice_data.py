@@ -40,8 +40,9 @@ mode "B" keeps the same irreps as "C", and keeps only the singlets whose
 irreps have quadratic Casimirs that sum to at most the cutoff.
 physical_plaquette_states lists a plaquette's physical states: the irreps
 on its links and control links, and the multiplicity index of the singlet
-at each of its sites, that together satisfy Gauss's law at all four
-sites (PlaquetteState).
+at each of its sites (numbered from 0; calc_cgcs's mult_idx, from 1, is one
+more), that together satisfy Gauss's law at all four sites
+(PlaquetteState).
 
 Within one lattice, plaquettes with the same signature
 (compute_plaquette_signature: the plane, and the half-links at each site)

@@ -29,8 +29,12 @@ state of that irrep, and product_state is a basis state of the product: a
 tuple of basis-state indices, one for each factor, in the order of
 product_iweights. The copies of an irrep in the decomposition (an irrep can
 appear more than once, as the adjoint does in 8 x 8 of SU(3)) are numbered
-from 1 by the multiplicity index, mult_idx. A CGC smaller than EPS in
-magnitude counts as zero and is left out.
+from 1 by the multiplicity index, mult_idx. The sign of each copy is fixed
+by a convention: on its highest-weight state, the nonzero CGC on the
+smallest product state is positive, where product states are compared with
+the factors in the order calc_cgcs sorts them into, which can differ from
+the order they are given in. A CGC smaller than EPS in magnitude counts as
+zero and is left out.
 
 Why the copies are chosen this way: when a tensor product repeats an irrep,
 an irrep can appear in its decomposition more than once, and its copies are
@@ -458,8 +462,8 @@ def _compute_highest_weight_cgcs(product_irreps: tuple[IrrepWeight, ...],
             else:
                 symmetrized /= np.linalg.norm(symmetrized)
 
-            # The phase convention is such that the CGC of the highest-weight
-            # product basis state is positive.
+            # The phase convention: the nonzero CGC on the smallest product
+            # state (with the factors in sorted order) is positive.
 
             for k in range(mult):
                 max_state_idx = selected_basis.index(min(selected_basis[n] for n in range(len(selected_basis)) if abs(symmetrized[k][n]) > EPS))

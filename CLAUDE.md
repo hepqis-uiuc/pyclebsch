@@ -35,7 +35,3 @@ SU(N) Clebsch-Gordan coefficient computation library with lattice gauge theory a
 - CGC multiplicity: 1-indexed in `calc_cgcs` API, 0-indexed for singlet multiplicities in lattice code
 - FORDER: permutation of `[1,2,3,-1,-2,-3]` defining half-link ordering at sites
 - Plaquette states: `(l1,l2,l3,l4, c1,c2,c3,c4, g1,g2,g3,g4)` — active links, controls, multiplicity indices
-
-## Skill
-
-Load `/pyclebsch` for the full reference when working on this codebase.
