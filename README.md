@@ -100,18 +100,6 @@ pyclebsch 0.3.0 requires Python 3.15 or later, for the builtin `frozendict`. A `
 - `calc_highest_weight_cgcs` and `calc_lower_weight_cgcs` are no longer public. Use `calc_cgcs`, which covers every access pattern (all irreps, one irrep, one copy, one state, one coefficient) and sorts the product for you.
 - i-weights must have integer entries. numpy integers are accepted and converted, so the sum-irrep keys in `calc_cgcs` results are plain `int` tuples; floats raise `TypeError`.
 
-## Usage/citations
-If you use this code in a paper, please cite:
-```bibtex
-@misc{balaji-2025-perturbat-su,
-  author = {Balaji, Praveen and Conefrey-Shinozaki, Cianan and Draper, Patrick and Elhaderi, Jason K. and Gupta, Drishti and Hidalgo, Luis and Lytle, Andrew},
-  title = {Perturbation theory, irrep truncations, and state preparation methods for quantum simulations of SU(3) lattice gauge theory},
-  year = {2025},
-  doi = {10.48550/ARXIV.2509.25865},
-  url = {https://arxiv.org/abs/2509.25865},
-}
-```
-
 ## Adding, updating, and removing dependencies
 To add a package to the project (for example, `numpy`):
 
@@ -189,3 +177,24 @@ Various scripts which make use of the functionality in `pyclebsch` are gathered 
 uv run -m run.demo
 ```
 If the script `run/some_script.py` exists, then replace `demo` with `some_script` to execute it instead. Additional scripts can be added this way. `run/demo_caches.py` demonstrates the CGC and plaquette caches.
+
+## Citations
+If you use this code in a paper, please cite:
+```bibtex
+@article{balaji-2025-perturbat-su,
+  eprinttype = {arXiv},
+  eprintclass = {hep-lat},
+  eprint = {2509.25865},
+  issn = {2470-0029},
+  month = {May},
+  number = {9},
+  volume = {113},
+  journal = {Physical Review D},
+  author = {Balaji, Praveen and Conefrey-Shinozaki, Cianan and Draper, Patrick and Elhaderi, Jason K. and Gupta, Drishti and Hidalgo, Luis and Lytle, Andrew},
+  title = {Perturbation theory, irrep truncations, and state preparation methods for quantum simulations of SU(3) lattice gauge theory},
+  year = {2026},
+  doi = {10.1103/m719-7tdf},
+  url = {http://dx.doi.org/10.1103/m719-7tdf},
+  publisher = {American Physical Society (APS)}
+}
+```
