@@ -37,7 +37,7 @@ pyclebsch.set_cgc_memory_cache_limit(500) # keep at most 500 tables (least recen
 ```
 
 ### CGCs on disk (opt-in)
-By default nothing is written to disk, so every new process computes the CGC tables it needs again. For small tensor products this is often fine, but single large products can take much longer (for example, finding the singlet in 3 ⊗ 3̄ ⊗ 8 ⊗ 8 ⊗ 6 ⊗ 6̄ can take upwards of a minute on a consumer-grade laptop). To keep tables across runs, name a directory, either in code
+By default nothing is written to disk, so every new process computes the CGC tables it needs again. For small tensor products this is often fine, but single large products can take much longer (for example, finding the singlet in $3 \otimes \bar{3} \otimes 8 \otimes 8 \otimes 6 \otimes \bar{6}$ can take upwards of a minute on a consumer-grade laptop). To keep tables across runs, name a directory, either in code
 ```Python
 import pyclebsch
 
