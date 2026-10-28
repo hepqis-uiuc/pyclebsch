@@ -1,13 +1,26 @@
 """Two-tier cache for Clebsch-Gordan coefficient tables.
 
 Lookups go memory -> disk (only if a directory is configured) -> compute.
-The memory tier is always on and lives for the process; set_cache_dir()
-clears it. The disk tier is opt-in, via set_cache_dir() or the
+The memory tier is always on and lives for the process; set_cgc_cache_dir()
+clears it. The disk tier is opt-in, via set_cgc_cache_dir() or the
 PYCLEBSCH_CACHE_DIR environment variable, and is only ever used at a path the
-user names: there is no default location. set_cache_dir() also writes that
+user names: there is no default location. set_cgc_cache_dir() also writes that
 variable, so worker processes started afterwards (including under spawn and
 forkserver) use the same directory; pool_kwargs() passes the settings to a
 multiprocessing.Pool explicitly.
+
+This module also holds the in-memory caches of the plaquette tables that
+pyclebsch.matrix_elements computes once per plaquette signature (see
+_PlaquetteCache), so that clear_memory_cache() clears them with the CGC
+tables. They have no disk tier. set_physical_plaquette_states_cache_limit()
+and set_plaquette_matrix_elements_cache_limit() cap them, separately from
+each other and from the CGC tables.
+
+The public interface is the section headed "Public interface" at the end of
+this module, and the names in __all__. The cache classes are internal: they
+return the stored objects themselves, which must not be modified, while the
+public ways to get tables (calc_cgcs and the by-signature functions of
+pyclebsch.matrix_elements) return new objects.
 
 Disk entry format
 -----------------
@@ -33,7 +46,6 @@ partly written file.
 """
 from __future__ import annotations
 
-import copy
 import functools
 import hashlib
 import json
@@ -52,6 +64,25 @@ from typing import Literal, TypedDict
 # su_n_operators imports neither cgc nor cache, so there is no import cycle.
 from pyclebsch.su_n_operators import IrrepWeight, normalize_iweight, standardize_iweight_type
 
+__all__ = [
+    "CACHE_FORMAT_VERSION",
+    "CGC_CACHE_VERSION",
+    "ENV_VAR",
+    "CGCCacheWarning",
+    "PoolKwargs",
+    "cgc_cache_stats",
+    "clear_memory_cache",
+    "get_cgc_cache_dir",
+    "init_worker",
+    "physical_plaquette_states_cache_stats",
+    "plaquette_matrix_elements_cache_stats",
+    "pool_kwargs",
+    "set_cgc_cache_dir",
+    "set_cgc_memory_cache_limit",
+    "set_physical_plaquette_states_cache_limit",
+    "set_plaquette_matrix_elements_cache_limit",
+]
+
 # Version of the CGC *conventions* baked into cached tables. Bump it whenever a
 # change alters any stored table for the same key. That covers:
 #   - the ordering of Gelfand-Tsetlin patterns (stored states are indices into it);
@@ -67,8 +98,8 @@ CGC_CACHE_VERSION: int = 1
 
 # Version of the on-disk envelope format (the dict around the table), which
 # is independent of the CGC conventions above. Bump it whenever the layout
-# written by CGCCache._write_disk changes: a field added, removed or renamed,
-# a field of the stored key (CacheKey.as_header) changed, or a change in the
+# written by _CGCCache._write_disk changes: a field added, removed or renamed,
+# a field of the stored key (_CGCCacheKey.as_header) changed, or a change in the
 # type of any value, including the structure of CGCTable itself.
 # tests/test_cgc_golden.py fails when the layout changes; the fix is to bump
 # this number and add the new layout there. Unlike a CGC_CACHE_VERSION bump,
@@ -106,8 +137,9 @@ class CGCCacheWarning(UserWarning):
 
 
 @dataclass(frozen=True, slots=True)
-class CacheKey:
-    """Identity of one cached CGC table.
+class _CGCCacheKey:
+    """Identity of one cached CGC table. Internal to this module and to
+    pyclebsch.cgc.
 
     product keeps the caller's order (not re-sorted), because the computation
     depends on it; calc_cgcs sorts before calling in.
@@ -120,13 +152,13 @@ class CacheKey:
 
     @classmethod
     def highest(cls, product_iweights: Iterable[Sequence[int]],
-                sum_iweight: Sequence[int], eps: float) -> CacheKey:
+                sum_iweight: Sequence[int], eps: float) -> _CGCCacheKey:
         """Key for the highest-weight table of sum_iweight in product_iweights."""
         return cls("highest", _key_product(product_iweights), _key_iweight(sum_iweight), None, eps)
 
     @classmethod
     def lower(cls, product_iweights: Iterable[Sequence[int]],
-              sum_iweight: Sequence[int], mult_idx: int, eps: float) -> CacheKey:
+              sum_iweight: Sequence[int], mult_idx: int, eps: float) -> _CGCCacheKey:
         """Key for all states of copy mult_idx of sum_iweight in product_iweights.
 
         numpy integers are accepted wherever int is annotated, and converted.
@@ -174,15 +206,86 @@ def _name_or_hash(name: str) -> str:
     return HASHED_NAME_PREFIX + hashlib.sha256(encoded).hexdigest()
 
 
-@dataclass(slots=True)
-class CacheStats:
-    """Counters since the last reset (per process)."""
-    memory_hits: int = 0
-    disk_hits: int = 0
-    computed: int = 0
-    disk_writes: int = 0
-    disk_rejected: int = 0     # unreadable, wrong version, or key mismatch
-    evictions: int = 0         # memory entries dropped because of the cap
+class _LRUMemoryCache[K, V]:
+    """In-memory map with an optional cap on its number of entries. Reading or
+    storing an entry makes it the most recently used; over the cap, the least
+    recently used entries are evicted. Values must not be None, which get()
+    returns for a missing key.
+
+    Counts, since creation or the last reset_counters(): hits (values found
+    by get, including through get_or_compute), computed (values computed by
+    get_or_compute) and evictions."""
+
+    def __init__(self, max_entries: int | None = None) -> None:
+        # OrderedDict so a hit can move its entry to the end (most recently
+        # used) and eviction can pop from the front (least recently used).
+        self._entries: OrderedDict[K, V] = OrderedDict()
+        self._max_entries: int | None = None
+        self.hits = 0
+        self.computed = 0
+        self.evictions = 0
+        self.set_max_entries(max_entries)
+
+    def reset_counters(self) -> None:
+        self.hits = 0
+        self.computed = 0
+        self.evictions = 0
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    @property
+    def max_entries(self) -> int | None:
+        return self._max_entries
+
+    def set_max_entries(self, max_entries: int | None) -> None:
+        """None means unbounded; otherwise an int >= 1 (ValueError if not).
+        Evicts least recently used entries down to the new limit."""
+        if max_entries is not None and (
+            isinstance(max_entries, bool) or not isinstance(max_entries, int) or max_entries < 1
+        ):
+            raise ValueError(f"max_entries must be None or an integer >= 1; got {max_entries!r}")
+        self._max_entries = max_entries
+        self._evict_over_limit()
+
+    def clear(self) -> None:
+        """Drop every entry."""
+        self._entries.clear()
+
+    def get(self, key: K) -> V | None:
+        """The value stored for key, now the most recently used, or None if
+        there is none."""
+        value = self._entries.get(key)
+        if value is not None:
+            self._entries.move_to_end(key)
+            self.hits += 1
+        return value
+
+    def put(self, key: K, value: V) -> None:
+        """Store value for key as the most recently used entry, then evict
+        down to the cap."""
+        self._entries[key] = value
+        self._entries.move_to_end(key)
+        self._evict_over_limit()
+
+    def get_or_compute(self, key: K, compute: Callable[[], V]) -> V:
+        """The value for key, computed with compute() if it is not stored.
+
+        The returned object is shared with the cache and must not be mutated.
+        """
+        value = self.get(key)
+        if value is None:
+            value = compute()
+            self.computed += 1
+            self.put(key, value)
+        return value
+
+    def _evict_over_limit(self) -> None:
+        if self._max_entries is None:
+            return
+        while len(self._entries) > self._max_entries:
+            self._entries.popitem(last=False)
+            self.evictions += 1
 
 
 # Errors that loading a damaged or foreign pickle can raise. A truncated file
@@ -193,32 +296,31 @@ _UNREADABLE_ENTRY_ERRORS = (EOFError, pickle.UnpicklingError, AttributeError,
                             ModuleNotFoundError, ValueError, TypeError, KeyError)
 
 
-class CGCCache:
-    """Memory tier (always on) in front of an optional disk tier."""
+class _CGCCache:
+    """Memory tier (always on) in front of an optional disk tier.
+
+    Internal: the module-level functions configure, clear and inspect the
+    process-wide instance. get_or_compute returns the stored table itself,
+    which must not be modified; calc_cgcs, the public way to get CGCs,
+    returns new dicts."""
 
     def __init__(self, disk_dir: Path | None = None,
                  max_memory_entries: int | None = None) -> None:
-        # OrderedDict so a hit can move its entry to the end (most recently
-        # used) and eviction can pop from the front (least recently used).
-        self._memory: OrderedDict[CacheKey, CGCTable] = OrderedDict()
+        self._memory: _LRUMemoryCache[_CGCCacheKey, CGCTable] = _LRUMemoryCache()
         self._disk_dir: Path | None = disk_dir
-        self._max_memory_entries: int | None = None
-        self._stats = CacheStats()
+        # Counters of this cache's own events. The memory tier counts its
+        # hits and evictions itself (see stats()).
+        self._counts = dict.fromkeys(("disk_hits", "computed", "disk_writes", "disk_rejected"), 0)
         self.set_max_memory_entries(max_memory_entries)
 
     @property
     def max_memory_entries(self) -> int | None:
-        return self._max_memory_entries
+        return self._memory.max_entries
 
     def set_max_memory_entries(self, max_entries: int | None) -> None:
         """None means unbounded; otherwise an int >= 1 (ValueError if not).
         Evicts least recently used entries down to the new limit."""
-        if max_entries is not None and (
-            isinstance(max_entries, bool) or not isinstance(max_entries, int) or max_entries < 1
-        ):
-            raise ValueError(f"max_entries must be None or an integer >= 1; got {max_entries!r}")
-        self._max_memory_entries = max_entries
-        self._evict_over_limit()
+        self._memory.set_max_entries(max_entries)
 
     @property
     def disk_dir(self) -> Path | None:
@@ -237,7 +339,7 @@ class CGCCache:
         """Drop every in-memory entry."""
         self._memory.clear()
 
-    def get_or_compute(self, key: CacheKey, compute: Callable[[], CGCTable]) -> CGCTable:
+    def get_or_compute(self, key: _CGCCacheKey, compute: Callable[[], CGCTable]) -> CGCTable:
         """Return the table for key, computing it at most once per process
         (unless the memory cap evicts it).
 
@@ -245,48 +347,41 @@ class CGCCache:
         """
         table = self._memory.get(key)
         if table is not None:
-            self._memory.move_to_end(key)
-            self._stats.memory_hits += 1
             return table
         if self._disk_dir is not None:
             table = self._read_disk(key)
             if table is not None:
                 self._remember(key, table)
-                self._stats.disk_hits += 1
+                self._counts["disk_hits"] += 1
                 return table
         table = compute()
-        self._stats.computed += 1
+        self._counts["computed"] += 1
         self._remember(key, table)
         if self._disk_dir is not None:
             self._write_disk(key, table)
         return table
 
-    def _remember(self, key: CacheKey, table: CGCTable) -> None:
+    def _remember(self, key: _CGCCacheKey, table: CGCTable) -> None:
         """Store in memory as the most recently used entry, then evict down
         to the cap."""
-        self._memory[key] = table
-        self._evict_over_limit()
+        self._memory.put(key, table)
 
-    def _evict_over_limit(self) -> None:
-        if self._max_memory_entries is None:
-            return
-        while len(self._memory) > self._max_memory_entries:
-            self._memory.popitem(last=False)
-            self._stats.evictions += 1
-
-    def stats(self) -> CacheStats:
-        """Copy of the current counters."""
-        return copy.copy(self._stats)
+    def stats(self) -> dict[str, int]:
+        """The counters since the last reset, as a new dict (see
+        cgc_cache_stats for the keys)."""
+        return {"memory_hits": self._memory.hits, **self._counts,
+                "evictions": self._memory.evictions}
 
     def reset_stats(self) -> None:
-        self._stats = CacheStats()
+        self._counts = dict.fromkeys(self._counts, 0)
+        self._memory.reset_counters()
 
-    def _entry_path(self, key: CacheKey) -> Path:
+    def _entry_path(self, key: _CGCCacheKey) -> Path:
         """<disk dir>/v<CGC_CACHE_VERSION>/<key.relative_path()>."""
         assert self._disk_dir is not None
         return self._disk_dir / f"v{CGC_CACHE_VERSION}" / key.relative_path()
 
-    def _read_disk(self, key: CacheKey) -> CGCTable | None:
+    def _read_disk(self, key: _CGCCacheKey) -> CGCTable | None:
         """The stored table for key, or None if there is none. An entry that
         cannot be unpickled, or whose envelope does not match the current
         versions and key, is rejected: warn with CGCCacheWarning, delete the
@@ -310,9 +405,9 @@ class CGCCache:
         warnings.warn(f"Discarding CGC cache entry {path}: {reason}. It will be recomputed.",
                       CGCCacheWarning, stacklevel=2)
         path.unlink(missing_ok=True)
-        self._stats.disk_rejected += 1
+        self._counts["disk_rejected"] += 1
 
-    def _write_disk(self, key: CacheKey, table: CGCTable) -> None:
+    def _write_disk(self, key: _CGCCacheKey, table: CGCTable) -> None:
         """Write the envelope for key atomically: pickle it to a temporary
         file in the target's directory, then rename that onto the target.
         os.replace is atomic within one filesystem, so a concurrent reader sees
@@ -338,11 +433,49 @@ class CGCCache:
         except BaseException:
             temp_path.unlink(missing_ok=True)
             raise
-        self._stats.disk_writes += 1
+        self._counts["disk_writes"] += 1
 
 
-def _envelope_mismatch(envelope: object, key: CacheKey) -> str | None:
-    """Why envelope cannot serve key, or None if it can."""
+class _PlaquetteCache:
+    """In-memory caches of the plaquette tables that pyclebsch.matrix_elements
+    computes once per plaquette signature: physical plaquette states, and
+    plaquette matrix elements. Each has its own cap on its number of entries;
+    neither has a disk tier.
+
+    The keys are built where the tables are computed:
+    _physical_plaquette_states_cache_key in lattice_data, and
+    _plaquette_matrix_elements_cache_key in plaquette_matrix_elements.
+
+    Internal: the module-level functions cap and clear the process-wide
+    instance. Its caches return the stored tables themselves, which must not
+    be modified; the by-signature functions, the public way to get the
+    tables, return copies.
+    """
+
+    def __init__(self) -> None:
+        self._physical_states: _LRUMemoryCache[tuple, list] = _LRUMemoryCache()
+        self._matrix_elements: _LRUMemoryCache[tuple, dict] = _LRUMemoryCache()
+
+    @property
+    def physical_states(self) -> _LRUMemoryCache[tuple, list]:
+        """Each entry the list of physical plaquette states of one signature."""
+        return self._physical_states
+
+    @property
+    def matrix_elements(self) -> _LRUMemoryCache[tuple, dict]:
+        """Each entry the plaquette matrix elements of one signature, as
+        {(final state, initial state): value}."""
+        return self._matrix_elements
+
+    def clear(self) -> None:
+        """Drop every entry of both caches."""
+        self._physical_states.clear()
+        self._matrix_elements.clear()
+
+
+def _envelope_mismatch(envelope: object, key: _CGCCacheKey) -> str | None:
+    """The reason envelope cannot be used for key, as a message for the
+    warning that rejects it; None if it can be used."""
     if not isinstance(envelope, dict) or "data" not in envelope:
         return "not a cache entry envelope"
     if envelope.get("format_version") != CACHE_FORMAT_VERSION:
@@ -412,10 +545,22 @@ def _installed_version() -> str | None:
 
 
 # Process-wide cache, configured from the environment at import time.
-_cache: CGCCache = CGCCache(disk_dir=_disk_dir_from_env())
+_cgc_cache: _CGCCache = _CGCCache(disk_dir=_disk_dir_from_env())
+
+# Process-wide plaquette caches, filled by
+# physical_plaquette_states_by_signature and
+# plaquette_matrix_elements_by_signature. Only the process that calls those
+# functions uses them: worker processes compute site factors, not whole
+# tables, so pool_kwargs() does not pass the plaquette cache limits on.
+_plaquette_cache: _PlaquetteCache = _PlaquetteCache()
 
 
-def set_cache_dir(path: str | os.PathLike[str] | None) -> None:
+# Public interface: the functions a user calls to configure, clear and
+# inspect the caches. __all__ lists every public name of this module.
+
+# The disk tier.
+
+def set_cgc_cache_dir(path: str | os.PathLike[str] | None) -> None:
     """Enable the disk tier at path (a leading "~" expanded, then resolved to
     an absolute path), or disable it with None. There is no default location:
     path must be given, and the empty string raises ValueError. Note that
@@ -423,44 +568,113 @@ def set_cache_dir(path: str | os.PathLike[str] | None) -> None:
     means the current working directory. Clears the in-memory cache and
     updates PYCLEBSCH_CACHE_DIR so worker processes started afterwards use
     the same setting."""
-    _cache.set_disk_dir(path)
-    if _cache.disk_dir is None:
+    _cgc_cache.set_disk_dir(path)
+    if _cgc_cache.disk_dir is None:
         os.environ.pop(ENV_VAR, None)
     else:
-        os.environ[ENV_VAR] = str(_cache.disk_dir)
+        os.environ[ENV_VAR] = str(_cgc_cache.disk_dir)
 
 
-def get_cache_dir() -> Path | None:
+def get_cgc_cache_dir() -> Path | None:
     """Absolute disk-tier directory, or None when disk caching is off (the default)."""
-    return _cache.disk_dir
+    return _cgc_cache.disk_dir
 
+
+# The in-memory caches: clearing, statistics and limits.
 
 def clear_memory_cache() -> None:
-    """Drop all in-memory CGC tables (disk entries are untouched)."""
-    _cache.clear_memory()
+    """Drop all in-memory CGC tables and plaquette tables (disk entries are
+    untouched)."""
+    _cgc_cache.clear_memory()
+    _plaquette_cache.clear()
 
 
-def cache_stats() -> CacheStats:
-    """Hit/compute counters for this process since the last reset."""
-    return _cache.stats()
+def cgc_cache_stats() -> dict[str, int]:
+    """Counters of the CGC cache for this process, as a new dict:
+      memory_hits    tables found in memory
+      disk_hits      tables read from disk
+      computed       tables computed
+      disk_writes    tables written to disk
+      disk_rejected  disk entries discarded as unreadable, of the wrong
+                     version, or with a mismatched key
+      evictions      tables dropped from memory because of the cap
+    The plaquette caches' statistics use the same keys for the counts they
+    share (memory_hits, computed, evictions)."""
+    return _cgc_cache.stats()
 
 
-def set_memory_cache_limit(max_entries: int | None) -> None:
+def set_cgc_memory_cache_limit(max_entries: int | None) -> None:
     """Cap the in-memory tier at max_entries tables (least recently used are
     evicted), or remove the cap with None (the default)."""
-    _cache.set_max_memory_entries(max_entries)
+    _cgc_cache.set_max_memory_entries(max_entries)
 
+
+def set_physical_plaquette_states_cache_limit(max_entries: int | None) -> None:
+    """Cap the in-memory cache of physical plaquette states at max_entries
+    tables (least recently used are evicted), or remove the cap with None
+    (the default). A table is the list of physical states of one plaquette
+    signature, for one set of the other inputs in its cache key (see
+    physical_plaquette_states_by_signature).
+
+    The limits of the CGC cache (set_cgc_memory_cache_limit) and of the plaquette
+    matrix elements cache (set_plaquette_matrix_elements_cache_limit) are
+    separate settings."""
+    _plaquette_cache.physical_states.set_max_entries(max_entries)
+
+
+def set_plaquette_matrix_elements_cache_limit(max_entries: int | None) -> None:
+    """Cap the in-memory cache of plaquette matrix elements at max_entries
+    tables (least recently used are evicted), or remove the cap with None
+    (the default). A table is the matrix elements of one plaquette
+    signature, for one set of the other inputs in its cache key (see
+    plaquette_matrix_elements_by_signature); at high cutoffs, one table can
+    hold millions of matrix elements.
+
+    The limits of the CGC cache (set_cgc_memory_cache_limit) and of the physical
+    plaquette states cache (set_physical_plaquette_states_cache_limit) are
+    separate settings."""
+    _plaquette_cache.matrix_elements.set_max_entries(max_entries)
+
+
+def physical_plaquette_states_cache_stats() -> dict[str, int]:
+    """Counters of the physical plaquette states cache since the process
+    started, as a new dict:
+      memory_hits  tables found in the cache
+      computed     tables computed and stored
+      evictions    tables dropped because of the cap
+    The keys mean the same as the keys of the same names in
+    cgc_cache_stats(); this cache has no disk tier, so it has no disk keys."""
+    return _plaquette_cache_stats(_plaquette_cache.physical_states)
+
+
+def plaquette_matrix_elements_cache_stats() -> dict[str, int]:
+    """Counters of the plaquette matrix elements cache since the process
+    started, as a new dict:
+      memory_hits  tables found in the cache
+      computed     tables computed and stored
+      evictions    tables dropped because of the cap
+    The keys mean the same as the keys of the same names in
+    cgc_cache_stats(); this cache has no disk tier, so it has no disk keys."""
+    return _plaquette_cache_stats(_plaquette_cache.matrix_elements)
+
+
+def _plaquette_cache_stats(cache: _LRUMemoryCache) -> dict[str, int]:
+    return {"memory_hits": cache.hits, "computed": cache.computed,
+            "evictions": cache.evictions}
+
+
+# Worker processes.
 
 def init_worker(disk_dir: Path | None, max_memory_entries: int | None) -> None:
     """multiprocessing.Pool initializer: apply the parent's cache settings.
 
     The directory is applied only if it differs from the worker's own
     setting. A fork worker already has the parent's setting, and its copy of
-    the parent's memory tier; calling set_cache_dir would needlessly clear it.
+    the parent's memory tier; calling set_cgc_cache_dir would needlessly clear it.
     """
-    if get_cache_dir() != disk_dir:
-        set_cache_dir(disk_dir)
-    set_memory_cache_limit(max_memory_entries)
+    if get_cgc_cache_dir() != disk_dir:
+        set_cgc_cache_dir(disk_dir)
+    set_cgc_memory_cache_limit(max_memory_entries)
 
 
 class PoolKwargs(TypedDict):
@@ -474,4 +688,4 @@ def pool_kwargs() -> PoolKwargs:
     """Keyword arguments that make a Pool's workers use this process's cache
     settings, e.g. multiprocessing.Pool(5, **pool_kwargs())."""
     return {"initializer": init_worker,
-            "initargs": (get_cache_dir(), _cache.max_memory_entries)}
+            "initargs": (get_cgc_cache_dir(), _cgc_cache.max_memory_entries)}

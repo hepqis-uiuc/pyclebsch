@@ -222,10 +222,10 @@ def layout_errors(value: object, layout: Layout, path: str = "envelope") -> list
 def disk_cache_disabled():
     """Compute every coefficient afresh rather than reading a disk cache that
     may hold tables written by other code."""
-    original = cgc.get_cache_dir()
-    cgc.set_cache_dir(None)
+    original = cgc.get_cgc_cache_dir()
+    cgc.set_cgc_cache_dir(None)
     yield
-    cgc.set_cache_dir(original)
+    cgc.set_cgc_cache_dir(original)
 
 
 def test_golden_table_exists_for_current_version() -> None:
@@ -271,7 +271,7 @@ def test_cache_format_version_match(tmp_path: Path) -> None:
     names and value types are pinned; a change in what a value means (e.g. a
     different eps convention stored as the same float) is not caught.
     """
-    cgc.set_cache_dir(tmp_path)   # disk_cache_disabled restores the original
+    cgc.set_cgc_cache_dir(tmp_path)   # disk_cache_disabled restores the original
     cgc.calc_cgcs([FUND, ANTIFUND], ADJOINT, 1)
     entries = sorted(f for f in tmp_path.rglob("*") if f.is_file())
     envelopes = {}

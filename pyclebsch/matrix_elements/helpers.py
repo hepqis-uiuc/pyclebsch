@@ -1,5 +1,13 @@
 """
-HELPER FUNCTIONS
+Functions on SU(N) irreps that the lattice code uses.
+
+- conjugate_iweight gives the i-weight of the conjugate irrep, for example
+  (1, 1, 0) for (1, 0, 0) in SU(3).
+- n_ality gives an irrep's charge under the center of SU(N).
+- get_irreps gives the irreps whose quadratic Casimir is at most a given
+  value, with their Casimirs; irreps_and_singlets (in lattice_data) uses it
+  for the "C" and "B" truncations.
+Irreps are labeled by i-weights (IrrepWeight, from su_n_operators).
 """
 
 import numpy as np
@@ -12,6 +20,19 @@ def conjugate_iweight(iweight: IrrepWeight) -> IrrepWeight:
 
     first,last = iweight[0],iweight[-1]
     return tuple(first - j + last for j in iweight[::-1])
+
+def n_ality(iweight: IrrepWeight) -> int:
+    """
+    The N-ality of an SU(N) irrep: its charge under the center of SU(N),
+    the group of the N-th roots of unity times the identity.
+
+    It is the sum of the entries of the i-weight normalized to last entry 0
+    (the number of boxes in its Young diagram), mod N, with N the length of
+    the i-weight. The N-alities of an irrep and its conjugate add to 0 mod N.
+    """
+    N = len(iweight)
+    last = iweight[-1]
+    return sum(entry - last for entry in iweight) % N
 
 def get_irreps(max_casimir: int | float, N: int) -> dict[tuple, float]:
     """

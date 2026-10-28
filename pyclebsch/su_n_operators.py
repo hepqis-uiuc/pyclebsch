@@ -1,3 +1,34 @@
+"""
+Representation theory of SU(N), computed with Gelfand-Tsetlin patterns.
+
+The methods, and the equations and pages cited in this module's docstrings
+("~Eq. (22)", "~Pg. 11"), are those of A. Alex et al., arXiv:1009.0437.
+
+Irreps are labeled by i-weights (IrrepWeight; see the comment on it). The
+basis states of an irrep are its Gelfand-Tsetlin (GT) patterns, sorted by
+p-weight with the highest-weight state first; calc_cgcs and the lattice code
+number basis states by their position in this order, starting from 0. See
+Alex et al. for the definitions of i-weights, GT patterns, and the p-weights
+and z-weights of basis states, which calc_weight computes.
+
+The module provides:
+- properties of an irrep: calc_dimension, calc_casimir (the quadratic
+  Casimir, (N^2 - 1)/(2N) for the fundamental) and calc_dynkin_index;
+- its basis states and their weights: find_gt_patterns and calc_weight;
+- the generators of SU(N) in an irrep: ladder_op, which applies a raising or
+  lowering operator to a product of basis states, and find_suN_basis, which
+  returns all N^2 - 1 generators as matrices, normalized so that
+  Tr(T_a T_b) = δ_ab / 2 in the fundamental;
+- decompositions of tensor products of irreps into irreps: find_direct_sum
+  gives each irrep's multiplicity, for example {(2, 1, 0): 1, (0, 0, 0): 1}
+  for [(1, 0, 0), (1, 1, 0)] (3 x 3bar = 8 + 1 in SU(3)); find_plethysms
+  decomposes n copies of one irrep and gives the irrep of the symmetric
+  group S_n (a partition of n) under which each term transforms (see its
+  docstring for plethysms); find_symmetry_direct_sum does both for a
+  product in which irreps repeat.
+find_plethysms is adapted from GroupMath (R. M. Fonseca, arXiv:2011.01764).
+"""
+
 from collections.abc import Sequence
 from math import factorial
 from numbers import Integral
@@ -13,7 +44,14 @@ from pyclebsch.symmetric_group.plethysm_utils import _Adams, _class_character, _
 from pyclebsch.symmetric_group.tableaux import find_partitions
 
 
-type IrrepWeight = tuple[int, int, ...] # Length N corresponds to SU(N) iweight.
+# An irrep of SU(N), labeled by its i-weight (A. Alex et al.,
+# arXiv:1009.0437): N integers m_1 >= m_2 >= ... >= m_N, the row lengths of
+# the irrep's Young diagram padded with zeros to N entries. Adding the same
+# integer to every entry gives the same irrep, since a column of N boxes is
+# the trivial irrep; normalize_iweight shifts the last entry to 0. For SU(3),
+# (1, 0, 0) is the fundamental, (1, 1, 0) the antifundamental and (2, 1, 0)
+# the adjoint.
+type IrrepWeight = tuple[int, ...]
 
 def normalize_iweight(iweight: IrrepWeight) -> IrrepWeight:
     """Returns normalized i-weight.
@@ -465,11 +503,26 @@ def find_symmetry_direct_sum(product_iweights: list[IrrepWeight], sum_iweight: O
 
 
 def find_plethysms(iweight: IrrepWeight, n: int) -> dict[tuple, dict[tuple, int]]:
-    """Decomposes a direct product of n factors of an irrep (iweight)
-    into a direct sum of irreps. The decomposition is returned as a dictionary
-    whose keys are the direct-sum irreps, and whose values are dictionaries
-    giving the symmetric group irrep (given as a partition of n) those
-    irreps transform under, with multiplicity.
+    """Decomposes the n-th tensor power of an irrep (iweight) by its symmetry
+    under permutations of the n factors.
+
+    The tensor power V x ... x V (n factors) is the direct sum of its
+    isotypic components, one for each irrep R_λ of S_n, labeled by a
+    partition λ of n: the λ isotypic component is the subspace spanned by
+    all the subspaces that permutations of the factors map to themselves and
+    on which they act as R_λ. Each isotypic component is a representation
+    V^(λ) of SU(N), tensored with R_λ: SU(N) acts on V^(λ) and S_n on R_λ.
+    V^(λ) is the plethysm of V with respect to λ (M. A. A. van Leeuwen et
+    al., the LiE manual, http://www-math.univ-poitiers.fr/~maavl/LiE/, top
+    of p. 50). The result maps each SU(N) irrep in the decomposition to the
+    partitions λ whose plethysms contain it, each with the irrep's
+    multiplicity in V^(λ).
+    For example, find_plethysms((1, 0, 0), 3) is
+    {(3, 0, 0): {(3,): 1}, (2, 1, 0): {(2, 1): 1}, (0, 0, 0): {(1, 1, 1): 1}}:
+    in SU(3), 3 x 3 x 3 = 10 + (8 x R_[2,1]) + 1. The 10 is symmetric under
+    permutations of the factors and the singlet antisymmetric. The adjoint
+    comes with R_[2,1], which has dimension 2, so it appears twice in the
+    decomposition.
     """
 
     # This code is largely adapted from the PermutationGroup.m file
@@ -499,7 +552,8 @@ def find_plethysms(iweight: IrrepWeight, n: int) -> dict[tuple, dict[tuple, int]
 
     # A plethysm has a polynomial where each term is an SU(N) irrep with
     # a multiplicity coefficient. The formula for the polynomial can be found
-    # in page 72 of http://wwwmathlabo.univ-poitiers.fr/~maavl/pdf/LiE-manual.pdf
+    # in page 72 of the LiE manual (M. A. A. van Leeuwen et al.),
+    # http://www-math.univ-poitiers.fr/~maavl/LiE/
     # The algorithm is iterative and many computations are repeated; to
     # mitigate this, Adams_dict stores all possible evaluations of Adams.
     # decomp_dict stores all direct-sum decompositions. part_dict effectively

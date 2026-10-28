@@ -30,7 +30,7 @@ PRELUDE = """
 import json, multiprocessing as mp, sys
 from pathlib import Path
 import pyclebsch.cgc as cgc
-from pyclebsch.cache import get_cache_dir
+from pyclebsch.cache import get_cgc_cache_dir
 from pyclebsch.matrix_elements.lattice_data import irreps_and_singlets, sites_links_and_plaquettes
 from pyclebsch.matrix_elements.plaquette_matrix_elements import calc_plaquette_site_factors
 
@@ -50,7 +50,7 @@ def max_difference(a, b):
     return max((abs(a.get(k, 0) - b.get(k, 0)) for k in a.keys() | b.keys()), default=0.0)
 
 def worker_cache_dir(_):
-    return str(get_cache_dir())
+    return str(get_cgc_cache_dir())
 
 def files_below(path):
     return sorted(str(f.relative_to(path)) for f in Path(path).rglob("*") if f.is_file())
@@ -87,9 +87,9 @@ def test_spawn_site_factor_workers_use_parent_disk_dir(tmp_path):
     disk, work = _dirs(tmp_path)
     out = _run_script(f"""
         mp.set_start_method("spawn")
-        cgc.set_cache_dir({str(disk)!r})
+        cgc.set_cgc_cache_dir({str(disk)!r})
         parallel = site_factors("L1", parallelize=True)
-        cgc.set_cache_dir(None)
+        cgc.set_cgc_cache_dir(None)
         serial = site_factors("L1", parallelize=False)
         print(json.dumps({{"disk_files": files_below({str(disk)!r}) if Path({str(disk)!r}).exists() else [],
                           "cwd_files": files_below("."), "diff": max_difference(parallel, serial)}}))
@@ -106,7 +106,7 @@ def test_spawn_workers_keep_disk_disabled(tmp_path):
     out = _run_script("""
         mp.set_start_method("spawn")
         site_factors("L1", parallelize=True)
-        print(json.dumps({"cache_dir": str(get_cache_dir()), "cwd_files": files_below(".")}))
+        print(json.dumps({"cache_dir": str(get_cgc_cache_dir()), "cwd_files": files_below(".")}))
     """, work, {CACHE_DIR_ENV_VAR: None})
     assert out == {"cache_dir": "None", "cwd_files": []}
 
@@ -117,17 +117,17 @@ def test_user_pool_workers_see_cache_dir_via_env(tmp_path):
     disk, work = _dirs(tmp_path)
     out = _run_script(f"""
         mp.set_start_method("spawn")
-        cgc.set_cache_dir({str(disk)!r})
+        cgc.set_cgc_cache_dir({str(disk)!r})
         with mp.Pool(2) as pool:
             seen = sorted(set(pool.map(worker_cache_dir, range(4))))
-        print(json.dumps({{"parent": str(get_cache_dir()), "workers": seen}}))
+        print(json.dumps({{"parent": str(get_cgc_cache_dir()), "workers": seen}}))
     """, work, {CACHE_DIR_ENV_VAR: None})
     assert out["workers"] == [out["parent"]] == [str(disk.resolve())]
 
 
 def test_forkserver_user_pool_sees_later_setting(tmp_path):
     """Records whether a user's forkserver Pool (no initializer), created after
-    the fork server started, sees a set_cache_dir call made in between.
+    the fork server started, sees a set_cgc_cache_dir call made in between.
 
     This records behavior rather than a preference. Forkserver workers are
     forked from the server process, which keeps the environment it started
@@ -141,7 +141,7 @@ def test_forkserver_user_pool_sees_later_setting(tmp_path):
         mp.set_start_method("forkserver")
         with mp.Pool(1) as pool:            # starts the fork server
             before = pool.map(worker_cache_dir, range(1))
-        cgc.set_cache_dir({str(disk)!r})
+        cgc.set_cgc_cache_dir({str(disk)!r})
         with mp.Pool(2) as pool:
             plain = sorted(set(pool.map(worker_cache_dir, range(4))))
         with mp.Pool(2, **pool_kwargs()) as pool:
@@ -161,9 +161,9 @@ def test_parallel_cold_disk_run_completes(tmp_path):
     disk, work = _dirs(tmp_path)
     out = _run_script(f"""
         mp.set_start_method("fork")
-        cgc.set_cache_dir({str(disk)!r})
+        cgc.set_cgc_cache_dir({str(disk)!r})
         parallel = site_factors("L3", parallelize=True)
-        cgc.set_cache_dir(None)
+        cgc.set_cgc_cache_dir(None)
         serial = site_factors("L3", parallelize=False)
         leftover = [f for f in files_below({str(disk)!r}) if Path(f).name.startswith(".tmp-")]
         print(json.dumps({{"entries": len(parallel), "diff": max_difference(parallel, serial),

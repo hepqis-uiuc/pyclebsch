@@ -1,20 +1,105 @@
 """
-PLAQUETTE MATRIX ELEMENTS
+Matrix elements of the plaquette operator between physical plaquette states.
+
+The plaquette operator of a plaquette is its Wilson loop in the fundamental
+representation of SU(N), taken around the plaquette in the direction of
+LatticeDef.plaquette_boundaries (l1 + l2 - l3 - l4). Its matrix elements
+between the plaquette's physical states (PlaquetteState, from lattice_data)
+factor into one site factor per corner of the plaquette, each a sum of
+products of Clebsch-Gordan coefficients (calc_cgcs) at that corner, times
+the square root of a ratio of products of irrep dimensions. Site factors are
+defined in P. Balaji et al., arXiv:2503.08866, and the formulas used here
+are written out in P. Balaji et al., arXiv:2509.25865.
+- calc_plaquette_site_factors computes the site factors of a plaquette
+  (SiteFactors), each the amplitude of one transition at one corner
+  (SiteTransition), by Eq. (5) of arXiv:2509.25865.
+- calc_plaquette_elements multiplies the site factors that agree on the
+  irreps of the links their corners share, by Eq. (4) of arXiv:2509.25865,
+  and returns
+  {(final state, initial state): matrix element}. Contributions smaller than
+  EPS in magnitude are dropped, and each value is rounded to PRES decimal
+  places. With parallelize=True, both functions spread the work over a
+  multiprocessing.Pool.
+- plaquette_matrix_elements_by_signature computes the matrix elements once
+  for each plaquette signature of a lattice (see plaquettes_by_signature in
+  lattice_data) and caches them in memory (see pyclebsch.cache).
+calc_plaquette_site_factors and calc_plaquette_elements take the irreps,
+singlets and conjugate states that irreps_and_singlets (in lattice_data)
+returns.
+
+For example, on the lattice of lattice_data's example,
+
+    matrix_elements = plaquette_matrix_elements_by_signature(
+        lattice, N=3, truncation_mode="T", cutoff=1, EPS=1e-10, PRES=10
+    )
+
+maps each of the two signatures to its 9 nonzero matrix elements, among
+them 1.0 from the state with the trivial irrep on every link to the state
+with the fundamental irrep (1, 0, 0) on l1 and l2 and the antifundamental
+(1, 1, 0) on l3 and l4.
 """
+
+import functools
+from typing import Literal
 
 import numpy as np
 from tqdm import tqdm
-from ..cache import pool_kwargs
+from ..cache import _plaquette_cache, pool_kwargs
 from ..cgc import calc_cgcs
 from itertools import product
 from multiprocessing import Pool
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from .helpers import conjugate_iweight
-from ..su_n_operators import calc_dimension, find_direct_sum
+from .lattice_data import (
+    ActiveLink,
+    ConjugateStates,
+    LatticeDef,
+    LinkDirection,
+    PlaquetteAddress,
+    PlaquetteGeometry,
+    PlaquetteSignature,
+    PlaquetteState,
+    SiteControlLinks,
+    SiteCoordinate,
+    SiteHalfLinks,
+    SiteMultiplicityIndex,
+    SiteSinglets,
+    _physical_plaquette_states_cache_key,
+    irreps_and_singlets,
+    plaquettes_by_signature,
+)
+from ..su_n_operators import IrrepWeight, calc_dimension, find_direct_sum
 
-def plaquette_site_factor(N, s, initial, final, URij, ij_idxs, ctrl_irreps, conj_dict, EPS):
+# The site factors of one plaquette, from calc_plaquette_site_factors: for
+# each site s (1 to 4) of a plaquette in plane (i, j),
+# {(Rii, Rji, Rif, Rjf, Gi, Gf, controls): site factor}. Rii and Rji are the
+# initial irreps of the plaquette's links at s along i and along j, Rif and
+# Rjf their final irreps, Gi and Gf the initial and final multiplicity
+# indices of the singlet at s, and controls the irreps of s's control links,
+# in F-order.
+type SiteFactors = dict[int, dict[SiteTransition, float]]
+# A transition at one site of a plaquette: (Rii, Rji, Rif, Rjf, Gi, Gf,
+# controls), as described for SiteFactors. A site factor is its amplitude.
+type SiteTransition = tuple[ActiveLink, ActiveLink, ActiveLink, ActiveLink,
+                            SiteMultiplicityIndex, SiteMultiplicityIndex,
+                            SiteControlLinks]
+
+def plaquette_site_factor(
+        N: int,
+        s: int,
+        initial: tuple[IrrepWeight, IrrepWeight, list[IrrepWeight], SiteMultiplicityIndex],
+        final: tuple[IrrepWeight, IrrepWeight, list[IrrepWeight], SiteMultiplicityIndex],
+        URij: tuple[IrrepWeight, IrrepWeight],
+        ij_idxs: tuple[int, int],
+        ctrl_irreps: SiteControlLinks,
+        conj_dict: ConjugateStates,
+        EPS: float,
+) -> tuple[float, int, SiteTransition] | Literal[0]:
     """
-    Calculates a site factor. The inputs are as follows.
+    Calculates a site factor.
+    Eq. (5) of arXiv:2509.25865
+    The inputs are as follows.
     s -> The plaquette site number. Different sites require different conjugations.
     initial/final -> initial/final singlet data given as
     (ith plaquette link irrep, jth plaquette link irrep, FORDERd irreps, multiplicity index).
@@ -27,6 +112,7 @@ def plaquette_site_factor(N, s, initial, final, URij, ij_idxs, ctrl_irreps, conj
     The output is a tuple (site factor value, plaquette site number, site factor data),
     with the last entry being (initial ith irrep, initial jth irrep, final ith irrep,
     final jth irrep, initial multiplicity index, final multiplicity index, control link irreps).
+    If the site factor's magnitude is below EPS, the output is 0 instead.
     """
 
     # For clarity, the ith and jth plaquette links are, respectively:
@@ -161,11 +247,23 @@ def plaquette_site_factor(N, s, initial, final, URij, ij_idxs, ctrl_irreps, conj
     else:
         return (RES,s,(Rii,Rji,Rif,Rjf,Gi,Gf,ctrl_irreps))
 
-def calc_plaquette_site_factors(N, P, sites, plaquettes, truncation_irreps, singlets, conj_dict, FORDER, EPS, parallelize=True):
+def calc_plaquette_site_factors(
+        N: int,
+        P: PlaquetteAddress,
+        sites: Mapping[SiteCoordinate, SiteHalfLinks],
+        plaquettes: Mapping[PlaquetteAddress, PlaquetteGeometry],
+        truncation_irreps: dict[int, list[IrrepWeight]],
+        singlets: SiteSinglets,
+        conj_dict: ConjugateStates,
+        FORDER: Sequence[LinkDirection],
+        EPS: float,
+        parallelize: bool = True,
+) -> SiteFactors:
     """
     Calculates all plaquette site factors for a plaquette P. P is a
-    tuple (site coordinate, lattice plane), such as ((0,0,0), (1,2)).
-    Site factors are returned as a nested dictionary of the form
+    tuple (site coordinate, lattice plane), such as ((0,0,0), (1,2)). The
+    arguments are those of calc_plaquette_elements, without PRES.
+    Site factors are returned (as the type SiteFactors) as a nested dictionary of the form
     {site number: {site factor: site factor value}}. Site factors are nested tuples
     of the form (initial ith link irrep, initial jth link irrep, final ith link irrep,
     final jth link irrep, initial multiplicity index, final multiplicity index,
@@ -174,7 +272,7 @@ def calc_plaquette_site_factors(N, P, sites, plaquettes, truncation_irreps, sing
     """
 
     # Gather information for P.
-    signature = (P[1], tuple(tuple(sorted(sites[s])) for s in plaquettes[P][2]))
+    signature = (P[1], tuple(tuple(sorted(sites[s])) for s in plaquettes[P].site_coordinates))
     plane, half_link_dirs_per_site = signature
     site_factors, site_factor_args = defaultdict(dict), []
     fund = tuple(1 if i==0 else 0 for i in range(N))
@@ -194,7 +292,7 @@ def calc_plaquette_site_factors(N, P, sites, plaquettes, truncation_irreps, sing
         """
 
         # Unpack some data.
-        URij = [UR_i,UR_j]
+        URij = (UR_i, UR_j)
         i_idx,j_idx = ij_idxs
         i_decomp = decomp_dict[n][UR_i]
         j_decomp = decomp_dict[n][UR_j]
@@ -225,8 +323,8 @@ def calc_plaquette_site_factors(N, P, sites, plaquettes, truncation_irreps, sing
                                 singleti.append(C[c_count])
                                 singletf.append(C[c_count])
                                 c_count += 1
-                        initial = [reRii,reRji,singleti,Gi]
-                        final = [reRif,reRjf,singletf,Gf]
+                        initial = (reRii, reRji, singleti, Gi)
+                        final = (reRif, reRjf, singletf, Gf)
                         site_factor_args.append((N,s,initial,final,URij,ij_idxs,ctrl_irreps,conj_dict,EPS))
     
     # Set up site factor calculations. site_factor_args contains a list of all
@@ -255,7 +353,7 @@ def calc_plaquette_site_factors(N, P, sites, plaquettes, truncation_irreps, sing
                 count += 1
             else:
                 continue
-        ij_idxs = [i_link_idx,j_link_idx]
+        ij_idxs = (i_link_idx, j_link_idx)
         num_links_at_site = len(half_link_dirs)
 
         # Call add_args. The booleans tell whether Ri and Rj must get conjugated
@@ -298,6 +396,7 @@ def glue_plaquette_site_factors(s1, info, site_factors, ctrl_idxs, BCs, dims, EP
     is a dictionary of pre-computed irrep dimensions to avoid repeated calculations.
     matrix elements are returned as a dictionary of the form:
     {(final plaquette state, initial plaquette state): matrix element value}.
+    Eq. (4) of arXiv:2509.25865
     """
 
     # Unpack data
@@ -381,7 +480,19 @@ def glue_plaquette_site_factors(s1, info, site_factors, ctrl_idxs, BCs, dims, EP
 
     return matrix_elements
 
-def calc_plaquette_elements(N, P, sites, plaquettes, truncation_irreps, singlets, conj_dict, FORDER, EPS, PRES, parallelize=True):
+def calc_plaquette_elements(
+        N: int,
+        P: PlaquetteAddress,
+        sites: Mapping[SiteCoordinate, SiteHalfLinks],
+        plaquettes: Mapping[PlaquetteAddress, PlaquetteGeometry],
+        truncation_irreps: dict[int, list[IrrepWeight]],
+        singlets: SiteSinglets,
+        conj_dict: ConjugateStates,
+        FORDER: Sequence[LinkDirection],
+        EPS: float,
+        PRES: int,
+        parallelize: bool = True,
+) -> dict[tuple[PlaquetteState, PlaquetteState], float]:
     """
     Calculates all plaquette matrix elements for a given plaquette P. P is a
     tuple (site coordinate, lattice plane), such as ((0,0,0), (1,2)). Matrix
@@ -392,12 +503,23 @@ def calc_plaquette_elements(N, P, sites, plaquettes, truncation_irreps, singlets
     Matrix elements are calculated using FORDER; this may change the values
     of matrix elements for plaquettes on different planes, and it is required
     to perform consistent site factor sums over irrep indices in products of CGCs.
+
+    truncation_irreps, singlets and conj_dict are the three values that
+    irreps_and_singlets returns. truncation_irreps maps each number of links
+    meeting at a site to the irreps allowed on the links of such a site; under
+    a B truncation, sites with different numbers of links can allow different
+    irreps.
+
+    Each matrix element value is a float: the matrix element of the plaquette
+    operator, the Wilson loop around P in the fundamental representation,
+    between the final and initial states. Contributions smaller than EPS in
+    magnitude are dropped, and each value is rounded to PRES decimal places.
     """
 
     # Gather information for P.
-    signature = (P[1], tuple(tuple(sorted(sites[s])) for s in plaquettes[P][2]))
+    signature = (P[1], tuple(tuple(sorted(sites[s])) for s in plaquettes[P].site_coordinates))
     plane, half_link_dirs_per_site = signature
-    unique_ctrls = plaquettes[P][-1]
+    unique_ctrls = plaquettes[P].unique_controls
 
     # Find control link FORDER indices.
     i_ctrl_idxs,j_ctrl_idxs = {},{}
@@ -507,4 +629,58 @@ def calc_plaquette_elements(N, P, sites, plaquettes, truncation_irreps, singlets
 
     # Combine all matrix element dictionaries in res.
     matrix_elements = {k:v for d in res for k,v in d.items()}
+    return matrix_elements
+
+def _plaquette_matrix_elements_cache_key(
+        lattice: LatticeDef, plaquette: PlaquetteAddress, N: int, truncation_mode: str, cutoff: float,
+        EPS: float, PRES: int
+) -> tuple:
+    """
+    The key under which the matrix elements of plaquette are cached (in
+    pyclebsch.cache._PlaquetteCache.matrix_elements): the key of its physical
+    states (see _physical_plaquette_states_cache_key in lattice_data), then
+    EPS and PRES. EPS (the threshold below which a product of site factors
+    is dropped) and PRES (the number of decimals every value is rounded to)
+    change the matrix elements but not which physical states exist, which
+    is why only this key has them.
+    """
+    return _physical_plaquette_states_cache_key(lattice, plaquette, N, truncation_mode, cutoff) + (EPS, PRES)
+
+def plaquette_matrix_elements_by_signature(
+        lattice: LatticeDef, N: int, truncation_mode: str, cutoff: float, EPS: float, PRES: int,
+        parallelize: bool = True
+) -> dict[PlaquetteSignature, dict[tuple[PlaquetteState, PlaquetteState], float]]:
+    """
+    calc_plaquette_elements (the plaquette matrix elements) for each
+    plaquette signature of the lattice, computed once per signature (see
+    plaquettes_by_signature in lattice_data for why that suffices).
+
+    The truncation irreps, singlets and conjugation data are those of
+    irreps_and_singlets(N, lattice.sites, truncation_mode, cutoff), and FORDER
+    is the lattice's. Each signature's matrix elements are computed on the
+    smallest plaquette address with that signature, and hold for every
+    plaquette with it.
+
+    The matrix elements are cached in memory across calls, keyed by
+    (signature, unique controls, N, truncation mode, cutoff, FORDER, EPS,
+    PRES); _plaquette_matrix_elements_cache_key says why. clear_memory_cache()
+    clears the cache and set_plaquette_matrix_elements_cache_limit() caps
+    it. Each returned dict is a new copy of the cached one, so the caller may
+    modify it. The copy is shallow; its keys are tuples and its values
+    floats, neither of which can be modified.
+    """
+    # irreps_and_singlets is only needed, and only computed, on a cache miss.
+    truncation_data = functools.cache(lambda: irreps_and_singlets(N, lattice.sites, truncation_mode, cutoff))
+
+    def compute(P):
+        truncation_irreps, singlets, conj_dict = truncation_data()
+        return calc_plaquette_elements(N, P, lattice.sites, lattice.plaquettes, truncation_irreps, singlets,
+                                       conj_dict, lattice.FORDER, EPS, PRES, parallelize)
+
+    matrix_elements = {}
+    for signature, plaquettes in plaquettes_by_signature(lattice).items():
+        matrix_elements[signature] = dict(_plaquette_cache.matrix_elements.get_or_compute(
+            _plaquette_matrix_elements_cache_key(lattice, plaquettes[0], N, truncation_mode, cutoff, EPS, PRES),
+            functools.partial(compute, plaquettes[0]),
+        ))
     return matrix_elements
